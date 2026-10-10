@@ -34,29 +34,57 @@ type User struct {
 	AvatarURL string `json:"avatar_url"`
 }
 
+type Reaction struct {
+	Emoji       string `json:"emoji"`
+	Count       int    `json:"count"`
+	UserReacted bool   `json:"user_reacted"`
+}
+
+type ReactionUser struct {
+	Username  string `json:"username"`
+	Nickname  string `json:"nickname"`
+	AvatarURL string `json:"avatar_url"`
+	Emoji     string `json:"emoji"`
+}
+
 type Comment struct {
-	ID         int    `json:"id"`
-	PostID     int    `json:"post_id"`
-	UserID     int    `json:"user_id"`
-	AuthorName string `json:"author_name"`
-	AuthorRole string `json:"author_role"`
-	AuthorPic  string `json:"author_pic"`
-	Content    string `json:"content"`
-	CreatedAt  string `json:"created_at"`
+	ID         int        `json:"id"`
+	PostID     int        `json:"post_id"`
+	UserID     int        `json:"user_id"`
+	ParentID   *int       `json:"parent_id,omitempty"`
+	AuthorName string     `json:"author_name"`
+	AuthorRole string     `json:"author_role"`
+	AuthorPic  string     `json:"author_pic"`
+	Content    string     `json:"content"`
+	CreatedAt  string     `json:"created_at"`
+	Reactions  []Reaction `json:"reactions"`
+	Replies    []Comment  `json:"replies"`
 }
 
 type Post struct {
-	ID          int       `json:"id"`
-	UserID      int       `json:"user_id"`
-	AuthorName  string    `json:"author_name"`
-	AuthorRole  string    `json:"author_role"`
-	AuthorPic   string    `json:"author_pic"`
-	Content     string    `json:"content"`
-	ImageURL    string    `json:"image_url"`
-	IsAnonymous bool      `json:"is_anonymous"`
-	Status      string    `json:"status"`
-	CreatedAt   string    `json:"created_at"`
-	Comments    []Comment `json:"comments"`
+	ID          int        `json:"id"`
+	UserID      int        `json:"user_id"`
+	AuthorName  string     `json:"author_name"`
+	AuthorRole  string     `json:"author_role"`
+	AuthorPic   string     `json:"author_pic"`
+	Content     string     `json:"content"`
+	ImageURL    string     `json:"image_url"`
+	IsAnonymous bool       `json:"is_anonymous"`
+	Status      string     `json:"status"`
+	CreatedAt   string     `json:"created_at"`
+	Reactions   []Reaction `json:"reactions"`
+	Comments    []Comment  `json:"comments"`
+}
+
+type Notification struct {
+	ID        int    `json:"id"`
+	ActorName string `json:"actor_name"`
+	ActorPic  string `json:"actor_pic"`
+	Type      string `json:"type"`
+	PostID    int    `json:"post_id"`
+	Message   string `json:"message"`
+	IsRead    bool   `json:"is_read"`
+	CreatedAt string `json:"created_at"`
 }
 
 type Response struct {
@@ -123,11 +151,17 @@ func main() {
 	fs := http.FileServer(http.Dir("./static"))
 	http.Handle("/static/", http.StripPrefix("/static/", fs))
 
+	// Health Endpoint
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	})
+
 	// Page Routes
 	http.HandleFunc("/", serveLogin)
 	http.HandleFunc("/dashboard", serveDashboard)
 
-	// Auth & User Profile APIs
+	// Auth & Profile APIs
 	http.HandleFunc("/api/register", handleRegister)
 	http.HandleFunc("/api/login", handleLogin)
 	http.HandleFunc("/api/logout", handleLogout)
@@ -140,11 +174,17 @@ func main() {
 	http.HandleFunc("/api/posts/edit", handleEditPost)
 	http.HandleFunc("/api/posts/delete", handleDeletePost)
 
-	// Comment APIs
+	// Reaction & Comment APIs
+	http.HandleFunc("/api/reactions/toggle", handleToggleReaction)
+	http.HandleFunc("/api/reactions/users", handleGetReactionUsers)
 	http.HandleFunc("/api/comments/create", handleCreateComment)
 	http.HandleFunc("/api/comments/delete", handleDeleteComment)
 
-	// Admin / Moderator APIs
+	// Notification APIs
+	http.HandleFunc("/api/notifications", handleGetNotifications)
+	http.HandleFunc("/api/notifications/read", handleMarkNotificationsRead)
+
+	// Admin APIs
 	http.HandleFunc("/api/admin/users", handleGetUsersList)
 	http.HandleFunc("/api/admin/user/role", handleUpdateUserRole)
 	http.HandleFunc("/api/admin/user/ban", handleBanUser)
@@ -171,7 +211,6 @@ func serveLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Auto-redirect to dashboard if session cookie is valid
 	if cookie, err := r.Cookie("session_user_id"); err == nil && cookie.Value != "" {
 		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 		return
@@ -181,7 +220,6 @@ func serveLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func serveDashboard(w http.ResponseWriter, r *http.Request) {
-	// Authenticate 7-day persistent cookie
 	cookie, err := r.Cookie("session_user_id")
 	if err != nil || cookie.Value == "" {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -247,7 +285,6 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 7-Day Persistent Session Cookie
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session_user_id",
 		Value:    strconv.Itoa(u.ID),
@@ -341,17 +378,34 @@ func handleCreatePost(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleGetPublicPosts(w http.ResponseWriter, r *http.Request) {
-	// Updated Query: When is_anonymous is TRUE, hide user nickname, avatar, and staff role
-	rows, err := db.Query(`
-		SELECT p.id, p.user_id, p.content, COALESCE(p.image_url, ''), p.is_anonymous, p.created_at,
+	searchQuery := r.URL.Query().Get("q")
+	currentUserID := 0
+	if cookie, err := r.Cookie("session_user_id"); err == nil {
+		currentUserID, _ = strconv.Atoi(cookie.Value)
+	}
+
+	baseQuery := `
+		SELECT p.id, p.user_id, p.content, COALESCE(p.image_url, ''), p.is_anonymous, p.status, p.created_at,
 		       CASE WHEN p.is_anonymous THEN 'Anonymous' ELSE u.nickname END AS author_name,
 		       CASE WHEN p.is_anonymous THEN 'user' ELSE u.role END AS author_role,
 		       CASE WHEN p.is_anonymous THEN 'https://api.dicebear.com/7.x/bottts/svg?seed=anonymous' ELSE COALESCE(u.avatar_url, '') END AS author_pic
 		FROM posts p
 		JOIN users u ON p.user_id = u.id
 		WHERE p.status = 'approved'
-		ORDER BY p.created_at DESC
-	`)
+	`
+
+	var rows *sql.Rows
+	var err error
+
+	if searchQuery != "" {
+		baseQuery += ` AND (LOWER(p.content) LIKE LOWER($1) OR LOWER(u.nickname) LIKE LOWER($1) OR LOWER(u.username) LIKE LOWER($1))`
+		baseQuery += ` ORDER BY p.created_at DESC`
+		rows, err = db.Query(baseQuery, "%"+searchQuery+"%")
+	} else {
+		baseQuery += ` ORDER BY p.created_at DESC`
+		rows, err = db.Query(baseQuery)
+	}
+
 	if err != nil {
 		http.Error(w, "DB error", http.StatusInternalServerError)
 		return
@@ -361,13 +415,15 @@ func handleGetPublicPosts(w http.ResponseWriter, r *http.Request) {
 	var posts []Post
 	for rows.Next() {
 		var p Post
-		rows.Scan(&p.ID, &p.UserID, &p.Content, &p.ImageURL, &p.IsAnonymous, &p.CreatedAt, &p.AuthorName, &p.AuthorRole, &p.AuthorPic)
+		rows.Scan(&p.ID, &p.UserID, &p.Content, &p.ImageURL, &p.IsAnonymous, &p.Status, &p.CreatedAt, &p.AuthorName, &p.AuthorRole, &p.AuthorPic)
+
+		p.Reactions = fetchReactions("post_id", p.ID, currentUserID)
 
 		cRows, cErr := db.Query(`
 			SELECT c.id, c.post_id, c.user_id, c.content, c.created_at, u.nickname, u.role, COALESCE(u.avatar_url, '')
 			FROM comments c
 			JOIN users u ON c.user_id = u.id
-			WHERE c.post_id = $1
+			WHERE c.post_id = $1 AND c.parent_id IS NULL
 			ORDER BY c.created_at ASC
 		`, p.ID)
 
@@ -376,6 +432,8 @@ func handleGetPublicPosts(w http.ResponseWriter, r *http.Request) {
 			for cRows.Next() {
 				var c Comment
 				cRows.Scan(&c.ID, &c.PostID, &c.UserID, &c.Content, &c.CreatedAt, &c.AuthorName, &c.AuthorRole, &c.AuthorPic)
+				c.Reactions = fetchReactions("comment_id", c.ID, currentUserID)
+				c.Replies = fetchCommentReplies(c.ID, currentUserID)
 				comments = append(comments, c)
 			}
 			cRows.Close()
@@ -389,12 +447,80 @@ func handleGetPublicPosts(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(posts)
 }
 
+func fetchCommentReplies(parentID int, currentUserID int) []Comment {
+	rows, err := db.Query(`
+		SELECT c.id, c.post_id, c.user_id, c.parent_id, c.content, c.created_at, u.nickname, u.role, COALESCE(u.avatar_url, '')
+		FROM comments c
+		JOIN users u ON c.user_id = u.id
+		WHERE c.parent_id = $1
+		ORDER BY c.created_at ASC
+	`, parentID)
+	if err != nil {
+		return []Comment{}
+	}
+	defer rows.Close()
+
+	var replies []Comment
+	for rows.Next() {
+		var c Comment
+		rows.Scan(&c.ID, &c.PostID, &c.UserID, &c.ParentID, &c.Content, &c.CreatedAt, &c.AuthorName, &c.AuthorRole, &c.AuthorPic)
+		c.Reactions = fetchReactions("comment_id", c.ID, currentUserID)
+		replies = append(replies, c)
+	}
+	return replies
+}
+
+func fetchReactions(targetCol string, targetID int, currentUserID int) []Reaction {
+	query := fmt.Sprintf(`
+		SELECT 
+			emoji, 
+			COUNT(*)::int AS count, 
+			(COUNT(CASE WHEN user_id = $2 THEN 1 END) > 0)::boolean AS user_reacted
+		FROM reactions
+		WHERE %s = $1
+		GROUP BY emoji
+	`, targetCol)
+
+	rows, err := db.Query(query, targetID, currentUserID)
+	if err != nil {
+		log.Printf("Error querying reactions for %s=%d: %v\n", targetCol, targetID, err)
+		return []Reaction{}
+	}
+	defer rows.Close()
+
+	var list []Reaction
+	for rows.Next() {
+		var r Reaction
+		if err := rows.Scan(&r.Emoji, &r.Count, &r.UserReacted); err != nil {
+			log.Printf("Error scanning reaction row: %v\n", err)
+			continue
+		}
+		list = append(list, r)
+	}
+	return list
+}
+
 func handleEditPost(w http.ResponseWriter, r *http.Request) {
 	var input struct {
+		UserID  int    `json:"user_id"`
 		PostID  int    `json:"post_id"`
 		Content string `json:"content"`
 	}
 	json.NewDecoder(r.Body).Decode(&input)
+
+	var status string
+	var authorID int
+	db.QueryRow(`SELECT status, user_id FROM posts WHERE id = $1`, input.PostID).Scan(&status, &authorID)
+
+	var requesterRole string
+	db.QueryRow(`SELECT role FROM users WHERE id = $1`, input.UserID).Scan(&requesterRole)
+
+	if status == "approved" && requesterRole != "admin" && requesterRole != "moderator" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(Response{Status: "error", Message: "Approved posts cannot be edited by users."})
+		return
+	}
 
 	_, err := db.Exec(`UPDATE posts SET content = $1 WHERE id = $2`, input.Content, input.PostID)
 	if err != nil {
@@ -408,9 +534,24 @@ func handleEditPost(w http.ResponseWriter, r *http.Request) {
 
 func handleDeletePost(w http.ResponseWriter, r *http.Request) {
 	var input struct {
+		UserID int `json:"user_id"`
 		PostID int `json:"post_id"`
 	}
 	json.NewDecoder(r.Body).Decode(&input)
+
+	var status string
+	var authorID int
+	db.QueryRow(`SELECT status, user_id FROM posts WHERE id = $1`, input.PostID).Scan(&status, &authorID)
+
+	var requesterRole string
+	db.QueryRow(`SELECT role FROM users WHERE id = $1`, input.UserID).Scan(&requesterRole)
+
+	if status == "approved" && requesterRole != "admin" && requesterRole != "moderator" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(Response{Status: "error", Message: "Approved posts cannot be deleted by users. Please contact an admin."})
+		return
+	}
 
 	_, err := db.Exec(`DELETE FROM posts WHERE id = $1`, input.PostID)
 	if err != nil {
@@ -422,18 +563,115 @@ func handleDeletePost(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(Response{Status: "success", Message: "Post deleted!"})
 }
 
-func handleCreateComment(w http.ResponseWriter, r *http.Request) {
+func handleToggleReaction(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		PostID  int    `json:"post_id"`
-		UserID  int    `json:"user_id"`
-		Content string `json:"content"`
+		UserID    int    `json:"user_id"`
+		PostID    *int   `json:"post_id,omitempty"`
+		CommentID *int   `json:"comment_id,omitempty"`
+		Emoji     string `json:"emoji"`
 	}
 	json.NewDecoder(r.Body).Decode(&input)
 
-	_, err := db.Exec(`INSERT INTO comments (post_id, user_id, content) VALUES ($1, $2, $3)`, input.PostID, input.UserID, input.Content)
+	var count int
+	if input.PostID != nil {
+		db.QueryRow(`SELECT COUNT(*) FROM reactions WHERE post_id = $1 AND user_id = $2 AND emoji = $3`, *input.PostID, input.UserID, input.Emoji).Scan(&count)
+		if count > 0 {
+			db.Exec(`DELETE FROM reactions WHERE post_id = $1 AND user_id = $2 AND emoji = $3`, *input.PostID, input.UserID, input.Emoji)
+		} else {
+			db.Exec(`INSERT INTO reactions (post_id, user_id, emoji) VALUES ($1, $2, $3)`, *input.PostID, input.UserID, input.Emoji)
+			var targetUserID int
+			db.QueryRow(`SELECT user_id FROM posts WHERE id = $1`, *input.PostID).Scan(&targetUserID)
+			if targetUserID != input.UserID {
+				db.Exec(`INSERT INTO notifications (user_id, actor_id, type, post_id, message) VALUES ($1, $2, 'react_post', $3, 'reacted to your post')`, targetUserID, input.UserID, *input.PostID)
+			}
+		}
+	} else if input.CommentID != nil {
+		db.QueryRow(`SELECT COUNT(*) FROM reactions WHERE comment_id = $1 AND user_id = $2 AND emoji = $3`, *input.CommentID, input.UserID, input.Emoji).Scan(&count)
+		if count > 0 {
+			db.Exec(`DELETE FROM reactions WHERE comment_id = $1 AND user_id = $2 AND emoji = $3`, *input.CommentID, input.UserID, input.Emoji)
+		} else {
+			db.Exec(`INSERT INTO reactions (comment_id, user_id, emoji) VALUES ($1, $2, $3)`, *input.CommentID, input.UserID, input.Emoji)
+			var targetUserID int
+			var postID int
+			db.QueryRow(`SELECT user_id, post_id FROM comments WHERE id = $1`, *input.CommentID).Scan(&targetUserID, &postID)
+			if targetUserID != input.UserID {
+				db.Exec(`INSERT INTO notifications (user_id, actor_id, type, post_id, message) VALUES ($1, $2, 'react_comment', $3, 'reacted to your comment')`, targetUserID, input.UserID, postID)
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(Response{Status: "success"})
+}
+
+func handleGetReactionUsers(w http.ResponseWriter, r *http.Request) {
+	postID := r.URL.Query().Get("post_id")
+	commentID := r.URL.Query().Get("comment_id")
+
+	var rows *sql.Rows
+	var err error
+
+	if postID != "" {
+		rows, err = db.Query(`
+			SELECT u.username, u.nickname, COALESCE(u.avatar_url, ''), r.emoji
+			FROM reactions r
+			JOIN users u ON r.user_id = u.id
+			WHERE r.post_id = $1
+		`, postID)
+	} else if commentID != "" {
+		rows, err = db.Query(`
+			SELECT u.username, u.nickname, COALESCE(u.avatar_url, ''), r.emoji
+			FROM reactions r
+			JOIN users u ON r.user_id = u.id
+			WHERE r.comment_id = $1
+		`, commentID)
+	}
+
+	if err != nil {
+		http.Error(w, "DB error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var list []ReactionUser
+	for rows.Next() {
+		var ru ReactionUser
+		rows.Scan(&ru.Username, &ru.Nickname, &ru.AvatarURL, &ru.Emoji)
+		list = append(list, ru)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(list)
+}
+
+func handleCreateComment(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		PostID   int    `json:"post_id"`
+		UserID   int    `json:"user_id"`
+		ParentID *int   `json:"parent_id,omitempty"`
+		Content  string `json:"content"`
+	}
+	json.NewDecoder(r.Body).Decode(&input)
+
+	query := `INSERT INTO comments (post_id, user_id, parent_id, content) VALUES ($1, $2, $3, $4)`
+	_, err := db.Exec(query, input.PostID, input.UserID, input.ParentID, input.Content)
 	if err != nil {
 		http.Error(w, "Failed to comment", http.StatusInternalServerError)
 		return
+	}
+
+	if input.ParentID != nil {
+		var parentUserID int
+		db.QueryRow(`SELECT user_id FROM comments WHERE id = $1`, *input.ParentID).Scan(&parentUserID)
+		if parentUserID != input.UserID {
+			db.Exec(`INSERT INTO notifications (user_id, actor_id, type, post_id, message) VALUES ($1, $2, 'reply_comment', $3, 'replied to your comment')`, parentUserID, input.UserID, input.PostID)
+		}
+	} else {
+		var postUserID int
+		db.QueryRow(`SELECT user_id FROM posts WHERE id = $1`, input.PostID).Scan(&postUserID)
+		if postUserID != input.UserID {
+			db.Exec(`INSERT INTO notifications (user_id, actor_id, type, post_id, message) VALUES ($1, $2, 'comment_post', $3, 'commented on your post')`, postUserID, input.UserID, input.PostID)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -454,6 +692,61 @@ func handleDeleteComment(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(Response{Status: "success", Message: "Comment deleted!"})
+}
+
+func handleGetNotifications(w http.ResponseWriter, r *http.Request) {
+	userID := 0
+	if cookie, err := r.Cookie("session_user_id"); err == nil && cookie.Value != "" {
+		userID, _ = strconv.Atoi(cookie.Value)
+	}
+
+	if userID == 0 {
+		paramID := r.URL.Query().Get("user_id")
+		userID, _ = strconv.Atoi(paramID)
+	}
+
+	rows, err := db.Query(`
+		SELECT n.id, u.nickname AS actor_name, COALESCE(u.avatar_url, '') AS actor_pic, n.type, n.post_id, n.message, n.is_read, n.created_at
+		FROM notifications n
+		JOIN users u ON n.actor_id = u.id
+		WHERE n.user_id = $1
+		ORDER BY n.created_at DESC
+		LIMIT 20
+	`, userID)
+	if err != nil {
+		http.Error(w, "DB error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var list []Notification
+	for rows.Next() {
+		var n Notification
+		rows.Scan(&n.ID, &n.ActorName, &n.ActorPic, &n.Type, &n.PostID, &n.Message, &n.IsRead, &n.CreatedAt)
+		list = append(list, n)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(list)
+}
+
+func handleMarkNotificationsRead(w http.ResponseWriter, r *http.Request) {
+	userID := 0
+	if cookie, err := r.Cookie("session_user_id"); err == nil && cookie.Value != "" {
+		userID, _ = strconv.Atoi(cookie.Value)
+	}
+
+	if userID == 0 {
+		var input struct {
+			UserID int `json:"user_id"`
+		}
+		json.NewDecoder(r.Body).Decode(&input)
+		userID = input.UserID
+	}
+
+	db.Exec(`UPDATE notifications SET is_read = TRUE WHERE user_id = $1`, userID)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(Response{Status: "success"})
 }
 
 func handleGetUsersList(w http.ResponseWriter, r *http.Request) {
@@ -501,7 +794,12 @@ func handleBanUser(w http.ResponseWriter, r *http.Request) {
 
 func handleGetPendingPosts(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query(`
-		SELECT p.id, p.content, COALESCE(p.image_url, ''), p.is_anonymous, p.created_at, u.nickname AS author_name, u.role AS author_role, COALESCE(u.avatar_url, '') AS author_pic
+		SELECT p.id, p.content, COALESCE(p.image_url, ''), p.is_anonymous, p.created_at, 
+		       CASE 
+		           WHEN p.is_anonymous THEN u.nickname || ' (Anonymous Post)' 
+		           ELSE u.nickname 
+		       END AS author_name, 
+		       u.role AS author_role, COALESCE(u.avatar_url, '') AS author_pic
 		FROM posts p
 		JOIN users u ON p.user_id = u.id
 		WHERE p.status = 'pending'
