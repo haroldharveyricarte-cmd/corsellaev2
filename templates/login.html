@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CorStellae — Welcome</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body class="auth-page">
+
+  <!-- Background Animated Lights -->
+  <div class="bg-glow orb-1"></div>
+  <div class="bg-glow orb-2"></div>
+
+  <div class="auth-container">
+    <!-- Brand Header -->
+    <div class="brand">
+      <div class="brand-logo">✨</div>
+      <h1>CorStellae</h1>
+      <p class="tagline">Every heart has a story, and every story deserves to be heard.</p>
+    </div>
+
+    <!-- Auth Card -->
+    <div class="auth-card">
+      <div class="auth-tabs">
+        <button id="tabRegister" class="tab-btn active">Sign Up</button>
+        <button id="tabLogin" class="tab-btn">Log In</button>
+      </div>
+
+      <!-- Registration Form -->
+      <form id="registerForm" class="auth-form">
+        <div class="form-header">
+          <h2>Create Account</h2>
+          <p>Join the CorStellae network today</p>
+        </div>
+        
+        <div class="input-group">
+          <label for="regUsername">Username</label>
+          <input type="text" id="regUsername" placeholder="e.g. starlight_user" required />
+        </div>
+
+        <div class="input-group">
+          <label for="regNickname">Display Name</label>
+          <input type="text" id="regNickname" placeholder="e.g. Alex Nova" required />
+        </div>
+
+        <div class="input-group">
+          <label for="regEmail">Email</label>
+          <input type="email" id="regEmail" placeholder="name@example.com" required />
+        </div>
+
+        <div class="input-group">
+          <label for="regPassword">Password</label>
+          <input type="password" id="regPassword" placeholder="••••••••" required />
+        </div>
+
+        <button type="submit" class="btn-primary">Create Account</button>
+      </form>
+
+      <!-- Login Form -->
+      <form id="loginForm" class="auth-form" style="display: none;">
+        <div class="form-header">
+          <h2>Welcome Back</h2>
+          <p>Enter your details to access your account</p>
+        </div>
+
+        <div class="input-group">
+          <label for="loginIdentifier">Email or Username</label>
+          <input type="text" id="loginIdentifier" placeholder="Email or Username" required />
+        </div>
+
+        <div class="input-group">
+          <label for="loginPassword">Password</label>
+          <input type="password" id="loginPassword" placeholder="••••••••" required />
+        </div>
+
+        <button type="submit" class="btn-primary">Log In</button>
+      </form>
+
+      <div id="authMsg" class="auth-message"></div>
+    </div>
+  </div>
+
+  <script src="/static/js/auth.js"></script>
+</body>
+</html>

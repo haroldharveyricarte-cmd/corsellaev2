@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CorStellae — Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body class="dashboard-page">
+
+  <!-- Mobile Overlay -->
+  <div id="sidebarOverlay" class="sidebar-overlay"></div>
+
+  <!-- Image Lightbox Modal -->
+  <div id="imageModal" class="modal-overlay" style="display: none;">
+    <div class="modal-content">
+      <span id="closeModalBtn" class="modal-close">&times;</span>
+      <img id="modalImage" src="" alt="Enlarged view" />
+    </div>
+  </div>
+
+  <!-- Scrollable Facebook-Style Comments Modal -->
+  <div id="commentsModal" class="modal-overlay" style="display: none;">
+    <div class="comments-modal-box">
+      <div class="comments-modal-header">
+        <h3>Comments</h3>
+        <span id="closeCommentsModalBtn" class="modal-close-icon">&times;</span>
+      </div>
+      <div id="modalCommentsList" class="comments-modal-body"></div>
+      <div class="comments-modal-footer">
+        <input type="text" id="modalCommentInput" placeholder="Write a comment..." />
+        <button id="modalCommentSubmitBtn" class="btn-sm btn-primary">Comment</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sidebar -->
+  <aside id="sidebar" class="sidebar">
+    <div class="sidebar-header">
+      <div class="brand">
+        <span class="logo">✨</span>
+        <span class="brand-text">CorStellae</span>
+      </div>
+      <button id="closeSidebar" class="close-btn">&times;</button>
+    </div>
+
+    <nav class="sidebar-menu">
+      <button class="nav-item active" data-view="feedView">
+        <span class="icon">🏠</span> <span>Feed</span>
+      </button>
+      <button class="nav-item" data-view="profileView">
+        <span class="icon">👤</span> <span>Profile</span>
+      </button>
+      <button id="adminTabBtn" class="nav-item admin-only" data-view="adminView" style="display: none;">
+        <span class="icon">🛡️</span> <span>Admin Panel</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="user-mini-profile">
+        <img id="sideAvatar" src="https://api.dicebear.com/7.x/bottts/svg?seed=user" alt="Avatar" />
+        <div class="user-info">
+          <span id="sideName">Loading...</span>
+          <span id="sideRoleBadge" class="badge">User</span>
+        </div>
+      </div>
+      <button id="logoutBtn" class="btn-logout">Log Out</button>
+    </div>
+  </aside>
+
+  <!-- Main Body Wrapper -->
+  <div class="main-wrapper">
+    <header class="topbar">
+      <button id="toggleSidebar" class="menu-btn">☰</button>
+      <h2 id="pageTitle">Dashboard Feed</h2>
+    </header>
+
+    <main class="content-container">
+      
+      <!-- FEED VIEW -->
+      <section id="feedView" class="view-section active">
+        <div class="create-post-card">
+          <h3>Share Your Story</h3>
+          <form id="postForm">
+            <textarea id="postContent" placeholder="Write your story..." rows="3" required></textarea>
+            
+            <div id="postPreviewContainer" class="post-preview-wrapper" style="display: none;">
+              <img id="postImagePreview" src="" alt="Preview" />
+              <button type="button" id="removePostImageBtn" class="btn-sm btn-logout">Remove Image</button>
+            </div>
+
+            <div class="post-actions">
+              <div class="file-upload-wrapper">
+                <label for="imageInput" class="file-label">📷 Attach Photo</label>
+                <input type="file" id="imageInput" accept="image/*" />
+              </div>
+              <label class="anon-toggle">
+                <input type="checkbox" id="anonCheckbox" />
+                <span>Post Anonymously</span>
+              </label>
+            </div>
+
+            <button type="submit" class="btn-primary">Submit for Review</button>
+          </form>
+          <p id="uploadStatus" class="status-msg"></p>
+        </div>
+
+        <div class="feed-section">
+          <h3>Community Stories</h3>
+          <div id="feedGrid" class="feed-grid"></div>
+        </div>
+      </section>
+
+      <!-- PROFILE VIEW -->
+      <section id="profileView" class="view-section" style="display: none;">
+        <div class="profile-card">
+          <h3>Edit Profile</h3>
+          <form id="profileForm">
+            <div class="avatar-edit-container">
+              <div class="avatar-wrapper">
+                <img id="profileAvatarPreview" src="https://api.dicebear.com/7.x/bottts/svg?seed=default" alt="Avatar Preview" />
+              </div>
+              <div class="avatar-btn-group">
+                <label for="avatarInput" class="file-label">📷 Change Photo</label>
+                <input type="file" id="avatarInput" accept="image/*" style="display: none;" />
+                <button type="button" id="removeAvatarBtn" class="btn-secondary btn-danger-text">🗑️ Remove Photo</button>
+              </div>
+            </div>
+
+            <div class="input-group">
+              <label for="editNickname">Display Name</label>
+              <input type="text" id="editNickname" required />
+            </div>
+
+            <div class="input-group">
+              <label for="editBio">Bio</label>
+              <textarea id="editBio" rows="3" placeholder="Tell the community about yourself..."></textarea>
+            </div>
+
+            <button type="submit" class="btn-primary">Save Changes</button>
+          </form>
+          <p id="profileStatus" class="status-msg"></p>
+        </div>
+      </section>
+
+      <!-- ADMIN PANEL VIEW -->
+      <section id="adminView" class="view-section" style="display: none;">
+        <div class="admin-grid">
+          
+          <div class="admin-card">
+            <h3>Pending Moderation Queue</h3>
+            <div id="pendingPostsList" class="admin-list"></div>
+          </div>
+
+          <div class="admin-card">
+            <h3>User Management</h3>
+            <div id="usersList" class="admin-list"></div>
+          </div>
+
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
