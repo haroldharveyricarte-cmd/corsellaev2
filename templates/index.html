@@ -26,6 +26,27 @@
     </div>
   </div>
 
+  <!-- Popup Toast Container -->
+<div id="toastNotification" style="position: fixed; bottom: 20px; right: 20px; background: #1f2937; color: #fff; padding: 12px 20px; border-radius: 8px; border-left: 4px solid #6366f1; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3); font-size: 13px; font-weight: 500; display: none; z-index: 9999; transition: opacity 0.3s ease;">
+  💬 Your comment was submitted and is pending admin approval!
+</div>
+
+<!-- Custom Confirmation Modal Overlay -->
+<div id="customConfirmModal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.6); display: none; align-items: center; justify-content: center; z-index: 10000;">
+  <div style="background: #1f2937; color: #f3f4f6; padding: 24px; border-radius: 12px; width: 380px; max-width: 90%; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5); border: 1px solid #374151; font-family: inherit;">
+    <h3 id="confirmModalTitle" style="margin-top: 0; font-size: 16px; font-weight: 600; color: #fff;">Are you sure?</h3>
+    <p id="confirmModalMessage" style="font-size: 13px; color: #9ca3af; margin-bottom: 20px; line-height: 1.5;"></p>
+    
+    <!-- Optional input for prompts (like editing content) -->
+    <textarea id="confirmModalInput" style="width: 100%; height: 80px; background: #111827; border: 1px solid #374151; color: #fff; padding: 10px; border-radius: 6px; font-size: 13px; display: none; margin-bottom: 20px; resize: vertical;"></textarea>
+    
+    <div style="display: flex; justify-content: flex-end; gap: 10px;">
+      <button id="confirmModalCancelBtn" style="background: #374151; color: #d1d5db; border: none; padding: 8px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;">Cancel</button>
+      <button id="confirmModalOkBtn" style="background: #f97316; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;">Confirm</button>
+    </div>
+  </div>
+</div>
+
   <!-- Scrollable Facebook-Style Comments Modal -->
   <div id="commentsModal" class="modal-overlay" style="display: none;">
     <div class="comments-modal-box">
@@ -186,12 +207,25 @@
         </div>
       </section>
 
-      <!-- ADMIN PANEL VIEW -->
+     <!-- ADMIN PANEL VIEW -->
       <section id="adminView" class="view-section" style="display: none;">
         <div class="admin-grid">
           <div class="admin-card">
-            <h3>Pending Moderation Queue</h3>
-            <div id="pendingPostsList" class="admin-list"></div>
+            <!-- Modern Pill Toggle Tabs -->
+            <div style="display: flex; background: #111827; padding: 4px; border-radius: 8px; margin-bottom: 16px; border: 1px solid #374151; gap: 4px;">
+              <button onclick="switchAdminTab('posts')" id="tab-posts-btn" style="flex: 1; padding: 8px 12px; font-size: 13px; font-weight: 600; border-radius: 6px; border: none; cursor: pointer; background: #4f46e5; color: white; transition: all 0.2s;">Pending Posts</button>
+              <button onclick="switchAdminTab('comments')" id="tab-comments-btn" style="flex: 1; padding: 8px 12px; font-size: 13px; font-weight: 600; border-radius: 6px; border: none; cursor: pointer; background: transparent; color: #9ca3af; transition: all 0.2s;">Pending Comments</button>
+            </div>
+
+            <!-- Pending Posts Section -->
+            <div id="admin-posts-container" class="admin-tab-content">
+              <div id="pendingPostsList" class="admin-list space-y-3"></div>
+            </div>
+
+            <!-- Pending Comments Section -->
+            <div id="admin-comments-container" class="admin-tab-content" style="display: none;">
+              <div id="pending-comments-list" class="admin-list space-y-3"></div>
+            </div>
           </div>
 
           <div class="admin-card">

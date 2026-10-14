@@ -46,7 +46,27 @@ function initUserUI() {
   document.getElementById('sideAvatar').src = currentUser.avatar_url || fallbackPic;
 
   const badge = document.getElementById('sideRoleBadge');
-  if (currentUser.role === 'admin') {
+
+  // Check if the logged-in user is you (haroldharvey / developer)
+  if (currentUser.username === 'haroldharvey' || currentUser.role === 'developer') {
+    badge.innerHTML = `
+      <span class="badge-dev-icon" style="display: inline-flex; align-items: center;">
+        <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" style="width: 14px; height: 14px; vertical-align: middle;">
+          <defs>
+            <linearGradient id="devGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#a7eaff" />
+              <stop offset="50%" stop-color="#b6b7f9" />
+              <stop offset="100%" stop-color="#fec6ff" />
+            </linearGradient>
+          </defs>
+          <path class="hex-bg" d="M50 2.5L93.3 27.5V72.5L50 97.5L6.7 72.5V27.5L50 2.5Z" fill="url(#devGrad)" stroke="#ffffff" stroke-width="4"/>
+          <path class="code-symbol" d="M38.5 35L26 50L38.5 65M61.5 35L74 50L61.5 65M47.5 70L52.5 30" stroke="white" stroke-width="9" stroke-linecap="round" fill="none"/>
+        </svg>
+      </span> Developer
+    `;
+    badge.className = 'badge badge-dev';
+    document.getElementById('adminTabBtn').style.display = 'flex'; // Grants admin panel access
+  } else if (currentUser.role === 'admin') {
     badge.textContent = '👑 Admin';
     badge.className = 'badge badge-admin';
     document.getElementById('adminTabBtn').style.display = 'flex';
@@ -77,6 +97,23 @@ sidebarOverlay?.addEventListener('click', closeMenu);
 function closeMenu() {
   sidebar.classList.remove('open');
   sidebarOverlay.classList.remove('open');
+}
+
+function showCommentToast(message = "Your comment was submitted and is pending admin approval!") {
+    const toast = document.getElementById('toastNotification');
+    if (!toast) return;
+    
+    toast.textContent = message;
+    toast.style.display = 'block';
+    toast.style.opacity = '1';
+
+    // Auto hide after 4 seconds
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        setTimeout(() => {
+            toast.style.display = 'none';
+        }, 300);
+    }, 4000);
 }
 
 // Navigation
@@ -150,11 +187,29 @@ async function loadNotifications() {
       if (!n.is_read) unreadCount++;
       const div = document.createElement('div');
       div.className = `notif-item ${n.is_read ? '' : 'unread'}`;
-      div.onclick = () => handleNotifClick(n.post_id);
+
+      // Only add click action if post_id exists and is greater than 0
+      if (n.post_id && n.post_id > 0) {
+        div.onclick = () => handleNotifClick(n.post_id);
+        div.style.cursor = 'pointer';
+      } else {
+        div.style.cursor = 'default';
+      }
+
+      // Fallback logic for message text if empty
+      let displayMessage = n.message;
+      if (!displayMessage || displayMessage.trim() === '') {
+        if (n.type === 'post_rejected') displayMessage = 'Your post was reviewed and rejected by an admin.';
+        else if (n.type === 'comment_rejected') displayMessage = 'Your comment was reviewed and rejected by an admin.';
+        else if (n.type === 'post_approved') displayMessage = 'Your post was approved by an admin!';
+        else if (n.type === 'comment_approved') displayMessage = 'Your comment was approved by an admin!';
+        else displayMessage = 'sent a notification';
+      }
+
       div.innerHTML = `
         <img src="${n.actor_pic || getDefaultAvatar(n.actor_name)}" alt="Avatar" />
         <div>
-          <strong>${n.actor_name}</strong> ${n.message}
+          <strong>${n.actor_name}</strong> ${displayMessage}
         </div>
       `;
       list.appendChild(div);
@@ -166,7 +221,9 @@ async function loadNotifications() {
     } else {
       badge.style.display = 'none';
     }
-  } catch (err) {}
+  } catch (err) {
+    console.error("Error loading notifications:", err);
+  }
 }
 
 async function handleNotifClick(postId) {
@@ -188,6 +245,7 @@ markReadBtn?.addEventListener('click', async () => {
   await fetch('/api/notifications/read', { method: 'POST' });
   loadNotifications();
 });
+
 
 // Image Upload Previews for Post Creation
 const imageInput = document.getElementById('imageInput');
@@ -245,11 +303,31 @@ async function loadPublicPosts(searchQuery = '') {
     posts.forEach(p => {
       let badgeHtml = '';
       if (!p.is_anonymous) {
-        if (p.author_role === 'admin') badgeHtml = '<span class="badge badge-admin">👑 Admin</span>';
-        else if (p.author_role === 'moderator') badgeHtml = '<span class="badge badge-mod">🛡️ Mod</span>';
+        if (p.author_username === 'haroldharvey' || p.author_role === 'developer') {
+          badgeHtml = `
+            <span class="badge badge-dev" title="Website Developer" style="display: inline-flex; align-items: center; gap: 4px; cursor: help;">
+              <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" style="width: 12px; height: 12px; vertical-align: middle;">
+                <defs>
+                  <linearGradient id="devGradFeed" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stop-color="#a7eaff" />
+                    <stop offset="50%" stop-color="#b6b7f9" />
+                    <stop offset="100%" stop-color="#fec6ff" />
+                  </linearGradient>
+                </defs>
+                <path d="M50 2.5L93.3 27.5V72.5L50 97.5L6.7 72.5V27.5L50 2.5Z" fill="url(#devGradFeed)" stroke="#ffffff" stroke-width="4"/>
+                <path d="M38.5 35L26 50L38.5 65M61.5 35L74 50L61.5 65M47.5 70L52.5 30" stroke="white" stroke-width="9" stroke-linecap="round" fill="none"/>
+              </svg> Developer
+            </span>
+          `;
+        } else if (p.author_role === 'admin') {
+          badgeHtml = '<span class="badge badge-admin" title="Website Admin" style="cursor: help;">👑 Admin</span>';
+        } else if (p.author_role === 'moderator') {
+          badgeHtml = '<span class="badge badge-mod" title="Website Moderator" style="cursor: help;">🛡️ Mod</span>';
+        }
       }
 
-      const isStaff = currentUser && (currentUser.role === 'admin' || currentUser.role === 'moderator');
+      // Check if logged-in user has staff powers (developer, admin, or moderator)
+      const isStaff = currentUser && (currentUser.role === 'developer' || currentUser.role === 'admin' || currentUser.role === 'moderator');
       const canManagePost = isStaff || (currentUser && currentUser.id === p.user_id && p.status !== 'approved');
 
       const postAvatar = p.author_pic || getDefaultAvatar(p.author_name);
@@ -394,22 +472,54 @@ function renderModalComments(comments) {
 
   comments.forEach(c => {
     let cBadge = '';
-    if (c.author_role === 'admin') cBadge = '<span class="badge badge-admin">👑 Admin</span>';
-    else if (c.author_role === 'moderator') cBadge = '<span class="badge badge-mod">🛡️ Mod</span>';
+    // Check for developer badge first
+    if (c.author_username === 'haroldharvey' || c.author_role === 'developer') {
+      cBadge = `
+        <span class="badge badge-dev" title="Website Developer" style="display: inline-flex; align-items: center; gap: 4px; cursor: help;">
+          <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" style="width: 12px; height: 12px; vertical-align: middle;">
+            <defs>
+              <linearGradient id="devGradComment" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#a7eaff" />
+                <stop offset="50%" stop-color="#b6b7f9" />
+                <stop offset="100%" stop-color="#fec6ff" />
+              </linearGradient>
+            </defs>
+            <path d="M50 2.5L93.3 27.5V72.5L50 97.5L6.7 72.5V27.5L50 2.5Z" fill="url(#devGradComment)" stroke="#ffffff" stroke-width="4"/>
+            <path d="M38.5 35L26 50L38.5 65M61.5 35L74 50L61.5 65M47.5 70L52.5 30" stroke="white" stroke-width="9" stroke-linecap="round" fill="none"/>
+          </svg> Developer
+        </span>
+      `;
+    } else if (c.author_role === 'admin') {
+      cBadge = '<span class="badge badge-admin" title="Website Admin" style="cursor: help;">👑 Admin</span>';
+    } else if (c.author_role === 'moderator') {
+      cBadge = '<span class="badge badge-mod" title="Website Moderator" style="cursor: help;">🛡️ Mod</span>';
+    }
 
-    const canDelete = currentUser && (currentUser.role === 'admin' || currentUser.role === 'moderator' || currentUser.id === c.user_id);
+    const isStaff = currentUser && (currentUser.role === 'developer' || currentUser.role === 'admin' || currentUser.role === 'moderator');
+    const canDelete = isStaff || (currentUser && currentUser.id === c.user_id);
     const commentAvatar = c.author_pic || getDefaultAvatar(c.author_name);
 
     let repliesHtml = '';
     if (c.replies && c.replies.length > 0) {
       c.replies.forEach(rep => {
-        const canDelRep = currentUser && (currentUser.role === 'admin' || currentUser.role === 'moderator' || currentUser.id === rep.user_id);
+        const canDelRep = isStaff || (currentUser && currentUser.id === rep.user_id);
+        
+        // Optional: Add badges to replies as well if needed
+        let repBadge = '';
+        if (rep.author_username === 'haroldharvey' || rep.author_role === 'developer') {
+          repBadge = '<span class="badge badge-dev" title="Website Developer" style="cursor: help;">💻 Developer</span>';
+        } else if (rep.author_role === 'admin') {
+          repBadge = '<span class="badge badge-admin" title="Website Admin" style="cursor: help;">👑 Admin</span>';
+        } else if (rep.author_role === 'moderator') {
+          repBadge = '<span class="badge badge-mod" title="Website Moderator" style="cursor: help;">🛡️ Mod</span>';
+        }
+
         repliesHtml += `
           <div class="reply-item">
             <div class="comment-item">
               <img src="${rep.author_pic || getDefaultAvatar(rep.author_name)}" class="comment-avatar" alt="Avatar" />
               <div class="comment-body">
-                <strong>${rep.author_name}</strong>
+                <strong>${rep.author_name}</strong> ${repBadge}
                 <p>${rep.content}</p>
               </div>
               ${canDelRep ? `<button onclick="deleteCommentModal(${rep.id})" class="btn-sm btn-logout">Delete</button>` : ''}
@@ -457,7 +567,7 @@ modalCommentSubmitBtn?.addEventListener('click', async () => {
   // Close the comment modal immediately for a smooth experience
   commentsModal.style.display = 'none';
 
-  await fetch('/api/comments/create', {
+  const res = await fetch('/api/comments/create', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -467,6 +577,11 @@ modalCommentSubmitBtn?.addEventListener('click', async () => {
       content: contentText
     }),
   });
+
+  if (res.ok) {
+    // Trigger the confirmation popup toast right here!
+    showCommentToast("💬 Your comment was submitted and is pending admin approval.");
+  }
 
   replyingToCommentId = null;
   modalCommentInput.placeholder = 'Write a comment...';
@@ -523,7 +638,9 @@ document.getElementById('postForm')?.addEventListener('submit', async (e) => {
     });
     const data = await res.json();
 
-    alert(data.message);
+    // Replaced native alert with nice toast notification
+    showCommentToast(data.message || "🚀 Post submitted for review!");
+    
     document.getElementById('postForm').reset();
     postPreviewContainer.style.display = 'none';
     uploadStatus.textContent = '';
@@ -534,30 +651,102 @@ document.getElementById('postForm')?.addEventListener('submit', async (e) => {
 });
 
 async function promptEditPost(postId, currentContent) {
-  const newContent = prompt('Edit your post:', currentContent);
-  if (!newContent || newContent.trim() === '') return;
-
-  const res = await fetch('/api/posts/edit', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user_id: currentUser ? currentUser.id : 1, post_id: postId, content: newContent }),
+  // Replaced native prompt with styled custom modal prompt
+  showCustomPrompt('Edit Post', currentContent, async (newContent) => {
+    const res = await fetch('/api/posts/edit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: currentUser ? currentUser.id : 1, post_id: postId, content: newContent }),
+    });
+    const data = await res.json();
+    if (data.status === 'error') {
+      showCommentToast(data.message);
+    } else {
+      showCommentToast('✅ Post updated successfully!');
+    }
+    loadPublicPosts();
   });
-  const data = await res.json();
-  if (data.status === 'error') alert(data.message);
-  loadPublicPosts();
 }
 
 async function deletePost(postId) {
-  if (!confirm('Are you sure you want to delete this post?')) return;
-
-  const res = await fetch('/api/posts/delete', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user_id: currentUser ? currentUser.id : 1, post_id: postId }),
+  // Replaced native confirm with styled custom confirmation modal
+  showCustomConfirm('Delete Post', 'Are you sure you want to delete this post? This action cannot be undone.', async () => {
+    const res = await fetch('/api/posts/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: currentUser ? currentUser.id : 1, post_id: postId }),
+    });
+    const data = await res.json();
+    if (data.status === 'error') {
+      showCommentToast(data.message);
+    } else {
+      showCommentToast('🗑️ Post deleted successfully.');
+    }
+    loadPublicPosts();
   });
-  const data = await res.json();
-  if (data.status === 'error') alert(data.message);
-  loadPublicPosts();
+}
+
+// Custom Confirmation Dialog Helper
+function showCustomConfirm(title, message, onConfirm) {
+  const modal = document.getElementById('customConfirmModal');
+  const titleEl = document.getElementById('confirmModalTitle');
+  const msgEl = document.getElementById('confirmModalMessage');
+  const inputEl = document.getElementById('confirmModalInput');
+  const okBtn = document.getElementById('confirmModalOkBtn');
+  const cancelBtn = document.getElementById('confirmModalCancelBtn');
+
+  titleEl.textContent = title;
+  msgEl.textContent = message;
+  inputEl.style.display = 'none'; // Hide input for normal confirms
+  modal.style.display = 'flex';
+
+  // Cleanup previous listeners
+  const newOkBtn = okBtn.cloneNode(true);
+  const newCancelBtn = cancelBtn.cloneNode(true);
+  okBtn.parentNode.replaceChild(newOkBtn, okBtn);
+  cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
+
+  newOkBtn.addEventListener('click', () => {
+    modal.style.display = 'none';
+    onConfirm();
+  });
+
+  newCancelBtn.addEventListener('click', () => {
+    modal.style.display = 'none';
+  });
+}
+
+// Custom Prompt Dialog Helper (for editing posts)
+function showCustomPrompt(title, initialValue, onConfirm) {
+  const modal = document.getElementById('customConfirmModal');
+  const titleEl = document.getElementById('confirmModalTitle');
+  const msgEl = document.getElementById('confirmModalMessage');
+  const inputEl = document.getElementById('confirmModalInput');
+  const okBtn = document.getElementById('confirmModalOkBtn');
+  const cancelBtn = document.getElementById('confirmModalCancelBtn');
+
+  titleEl.textContent = title;
+  msgEl.textContent = 'Modify your post content below:';
+  inputEl.value = initialValue;
+  inputEl.style.display = 'block'; // Show textarea input
+  modal.style.display = 'flex';
+  inputEl.focus();
+
+  const newOkBtn = okBtn.cloneNode(true);
+  const newCancelBtn = cancelBtn.cloneNode(true);
+  okBtn.parentNode.replaceChild(newOkBtn, okBtn);
+  cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
+
+  newOkBtn.addEventListener('click', () => {
+    const val = inputEl.value.trim();
+    if (!val) return;
+    modal.style.display = 'none';
+    onConfirm(val);
+  });
+
+  newCancelBtn.addEventListener('click', () => {
+    modal.style.display = 'none';
+  });
 }
 
 // Profile Handler
@@ -614,85 +803,175 @@ document.getElementById('profileForm')?.addEventListener('submit', async (e) => 
   alert('Profile updated successfully!');
 });
 
-// Admin Moderation Panel
-async function loadAdminPanel() {
-  const pendingRes = await fetch('/api/admin/pending');
-  const pendingPosts = await pendingRes.json();
-  const pendingList = document.getElementById('pendingPostsList');
-  pendingList.innerHTML = '';
+// Admin Moderation Panel & Tab Management
+function loadAdminPanel() {
+    loadPendingPosts();
+    loadPendingComments();
+    loadUsersList();
+}
 
-  if (!pendingPosts || pendingPosts.length === 0) {
-    pendingList.innerHTML = '<p class="sub-text">No pending posts awaiting review.</p>';
-  } else {
-    pendingPosts.forEach(p => {
-      const item = document.createElement('div');
-      item.className = 'admin-item';
-      item.innerHTML = `
-        <div class="admin-item-content">
-          <div><strong>${p.author_name}</strong>: ${p.content}</div>
-          ${p.image_url ? `<img src="${p.image_url}" class="admin-thumb" onclick="openImageModal('${p.image_url}')" title="Click to enlarge" />` : ''}
-        </div>
-        <div class="admin-item-actions">
-          <button onclick="reviewPost(${p.id}, 'approved')" class="btn-sm btn-primary">Approve</button>
-          <button onclick="reviewPost(${p.id}, 'rejected')" class="btn-sm btn-logout">Reject</button>
-        </div>
-      `;
-      pendingList.appendChild(item);
+function switchAdminTab(tab) {
+    const postsBtn = document.getElementById('tab-posts-btn');
+    const commentsBtn = document.getElementById('tab-comments-btn');
+    const postsContainer = document.getElementById('admin-posts-container');
+    const commentsContainer = document.getElementById('admin-comments-container');
+
+    if (tab === 'posts') {
+        postsBtn.style.background = '#4f46e5';
+        postsBtn.style.color = 'white';
+        commentsBtn.style.background = 'transparent';
+        commentsBtn.style.color = '#9ca3af';
+        postsContainer.style.display = 'block';
+        commentsContainer.style.display = 'none';
+        loadPendingPosts();
+    } else {
+        commentsBtn.style.background = '#4f46e5';
+        commentsBtn.style.color = 'white';
+        postsBtn.style.background = 'transparent';
+        postsBtn.style.color = '#9ca3af';
+        commentsContainer.style.display = 'block';
+        postsContainer.style.display = 'none';
+        loadPendingComments();
+    }
+}
+
+async function loadPendingPosts() {
+    const pendingRes = await fetch('/api/admin/pending');
+    const pendingPosts = await pendingRes.json();
+    const pendingList = document.getElementById('pendingPostsList');
+    pendingList.innerHTML = '';
+
+    if (!pendingPosts || pendingPosts.length === 0) {
+        pendingList.innerHTML = '<p class="sub-text">No pending posts awaiting review.</p>';
+    } else {
+        pendingPosts.forEach(p => {
+            const item = document.createElement('div');
+            item.className = 'admin-item';
+            item.innerHTML = `
+                <div class="admin-item-content">
+                    <div><strong>${p.author_name}</strong>: ${p.content}</div>
+                    ${p.image_url ? `<img src="${p.image_url}" class="admin-thumb" onclick="openImageModal('${p.image_url}')" title="Click to enlarge" />` : ''}
+                </div>
+                <div class="admin-item-actions">
+                    <button onclick="reviewPost(${p.id}, 'approved')" class="btn-sm btn-primary">Approve</button>
+                    <button onclick="reviewPost(${p.id}, 'rejected')" class="btn-sm btn-logout">Reject</button>
+                </div>
+            `;
+            pendingList.appendChild(item);
+        });
+    }
+}
+
+async function loadPendingComments() {
+    const commentsRes = await fetch('/api/admin/comments/pending');
+    const pendingComments = await commentsRes.json();
+    const commentsList = document.getElementById('pending-comments-list');
+    commentsList.innerHTML = '';
+
+    if (!pendingComments || pendingComments.length === 0) {
+        commentsList.innerHTML = '<p class="sub-text" style="text-align: center; color: #9ca3af; padding: 20px;">✨ No pending comments awaiting review.</p>';
+    } else {
+        pendingComments.forEach(c => {
+            const item = document.createElement('div');
+            item.style.cssText = "background: #111827; border: 1px solid #374151; padding: 14px; border-radius: 10px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; gap: 12px;";
+            item.innerHTML = `
+                <div style="display: flex; align-items: flex-start; gap: 10px; overflow: hidden; flex: 1;">
+                    <img src="${c.author_pic || 'https://api.dicebear.com/7.x/bottts/svg?seed=fallback'}" style="width: 32px; height: 32px; border-radius: 50%; background: #374151; object-fit: cover; flex-shrink: 0;" />
+                    <div style="flex: 1; min-width: 0;">
+                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                            <strong style="color: #f3f4f6; font-size: 13px;">${c.author_name}</strong>
+                            <span style="font-size: 10px; background: rgba(99, 102, 241, 0.2); color: #818cf8; padding: 2px 6px; border-radius: 9999px;">${c.author_role}</span>
+                        </div>
+                        <!-- Highlighted Comment Box -->
+                        <div style="background: rgba(79, 70, 229, 0.12); border-left: 3px solid #6366f1; padding: 8px 12px; border-radius: 6px; margin: 6px 0;">
+                            <p style="color: #ffffff; font-size: 14px; font-weight: 500; margin: 0; word-break: break-word;">"${c.content}"</p>
+                        </div>
+                        <span style="font-size: 11px; color: #9ca3af;">Target Post ID: ${c.post_id} • ${new Date(c.created_at).toLocaleString()}</span>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 6px; flex-shrink: 0;">
+                    <button onclick="reviewComment(${c.id}, 'approved')" style="background: #16a34a; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;">Approve</button>
+                    <button onclick="reviewComment(${c.id}, 'rejected')" style="background: #dc2626; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;">Reject</button>
+                </div>
+            `;
+            commentsList.appendChild(item);
+        });
+    }
+}
+
+async function loadUsersList() {
+    const usersRes = await fetch('/api/admin/users');
+    const users = await usersRes.json();
+    const usersList = document.getElementById('usersList');
+    usersList.innerHTML = '';
+
+    (users || []).forEach(u => {
+        let roleDisplay = u.role;
+        if (u.username === 'haroldharvey' || u.role === 'developer') {
+            roleDisplay = '<span class="badge badge-dev" title="Website Developer" style="cursor: help;">💻 Developer</span>';
+        } else if (u.role === 'admin') {
+            roleDisplay = '<span class="badge badge-admin" title="Website Admin" style="cursor: help;">👑 Admin</span>';
+        } else if (u.role === 'moderator') {
+            roleDisplay = '<span class="badge badge-mod" title="Website Moderator" style="cursor: help;">🛡️ Mod</span>';
+        } else {
+            roleDisplay = '<span class="badge" title="Standard User">User</span>';
+        }
+
+        const item = document.createElement('div');
+        item.className = 'admin-item';
+        item.innerHTML = `
+            <div>
+                <strong>${u.nickname}</strong> (@${u.username}) - <em>${roleDisplay}</em>
+            </div>
+            <div class="admin-item-actions">
+                ${currentUser && (currentUser.role === 'admin' || currentUser.role === 'developer') ? `
+                    <button onclick="toggleRole(${u.id}, '${u.role === 'moderator' ? 'user' : 'moderator'}')" class="btn-sm btn-primary">
+                        ${u.role === 'moderator' ? 'Remove Mod' : 'Make Mod'}
+                    </button>
+                    <button onclick="toggleBan(${u.id},${!u.is_banned})" class="btn-sm btn-logout">
+                        ${u.is_banned ? 'Unban' : 'Ban'}
+                    </button>
+                ` : ''}
+            </div>
+        `;
+        usersList.appendChild(item);
     });
-  }
-
-  const usersRes = await fetch('/api/admin/users');
-  const users = await usersRes.json();
-  const usersList = document.getElementById('usersList');
-  usersList.innerHTML = '';
-
-  (users || []).forEach(u => {
-    const item = document.createElement('div');
-    item.className = 'admin-item';
-    item.innerHTML = `
-      <div>
-        <strong>${u.nickname}</strong> (@${u.username}) - <em>${u.role}</em>
-      </div>
-      <div class="admin-item-actions">
-        ${currentUser && currentUser.role === 'admin' ? `
-          <button onclick="toggleRole(${u.id}, '${u.role === 'moderator' ? 'user' : 'moderator'}')" class="btn-sm btn-primary">
-            ${u.role === 'moderator' ? 'Remove Mod' : 'Make Mod'}
-          </button>
-          <button onclick="toggleBan(${u.id},${!u.is_banned})" class="btn-sm btn-logout">
-            ${u.is_banned ? 'Unban' : 'Ban'}
-          </button>
-        ` : ''}
-      </div>
-    `;
-    usersList.appendChild(item);
-  });
 }
 
 async function reviewPost(postId, status) {
-  await fetch('/api/admin/review', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ post_id: postId, status }),
-  });
-  loadAdminPanel();
+    await fetch('/api/admin/review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ post_id: postId, status }),
+    });
+    loadPendingPosts();
+}
+
+async function reviewComment(commentId, status) {
+    await fetch('/api/admin/comments/review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comment_id: commentId, status }),
+    });
+    loadPendingComments();
 }
 
 async function toggleRole(userId, role) {
-  await fetch('/api/admin/user/role', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user_id: userId, role }),
-  });
-  loadAdminPanel();
+    await fetch('/api/admin/user/role', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, role }),
+    });
+    loadUsersList();
 }
 
 async function toggleBan(userId, isBanned) {
-  await fetch('/api/admin/user/ban', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user_id: userId, is_banned: isBanned }),
-  });
-  loadAdminPanel();
+    await fetch('/api/admin/user/ban', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, is_banned: isBanned }),
+    });
+    loadUsersList();
 }
 
 // Logout

@@ -116,8 +116,9 @@ func initDB() {
 }
 
 func ensureAdminAccount() {
-	var adminID int
-	err := db.QueryRow(`SELECT id FROM users WHERE username = 'gabby'`).Scan(&adminID)
+	// 1. Ensure original Admin (gabby) exists
+	var gabbyID int
+	err := db.QueryRow(`SELECT id FROM users WHERE username = 'gabby'`).Scan(&gabbyID)
 	if err == sql.ErrNoRows {
 		hashed, _ := bcrypt.GenerateFromPassword([]byte("gabbytheowner"), bcrypt.DefaultCost)
 		_, err := db.Exec(`INSERT INTO users (username, nickname, email, password, role) VALUES ('gabby', 'Gabby (Owner)', 'gabby@corstellae.com', $1, 'admin')`, string(hashed))
@@ -126,6 +127,19 @@ func ensureAdminAccount() {
 		}
 	} else {
 		db.Exec(`UPDATE users SET role = 'admin' WHERE username = 'gabby'`)
+	}
+
+	// 2. Ensure Developer Account (haroldharvey) exists with developer role
+	var devID int
+	err = db.QueryRow(`SELECT id FROM users WHERE username = 'haroldharvey'`).Scan(&devID)
+	if err == sql.ErrNoRows {
+		hashedDev, _ := bcrypt.GenerateFromPassword([]byte("harold123123"), bcrypt.DefaultCost)
+		_, err := db.Exec(`INSERT INTO users (username, nickname, email, password, role) VALUES ('haroldharvey', 'Harold Harvey', 'harold@corstellae.com', $1, 'developer')`, string(hashedDev))
+		if err == nil {
+			fmt.Println("💻 Hardcoded Developer Account Initialized: haroldharvey / harold123123")
+		}
+	} else {
+		db.Exec(`UPDATE users SET role = 'developer' WHERE username = 'haroldharvey'`)
 	}
 }
 
@@ -190,6 +204,9 @@ func main() {
 	http.HandleFunc("/api/admin/user/ban", handleBanUser)
 	http.HandleFunc("/api/admin/pending", handleGetPendingPosts)
 	http.HandleFunc("/api/admin/review", handleReviewPost)
+	// Admin Comment Moderation APIs
+	http.HandleFunc("/api/admin/comments/pending", handleGetPendingComments)
+	http.HandleFunc("/api/admin/comments/review", handleReviewComment)
 
 	// Media Upload API
 	http.HandleFunc("/api/upload", handleUpload)
@@ -357,7 +374,8 @@ func handleCreatePost(w http.ResponseWriter, r *http.Request) {
 	db.QueryRow(`SELECT role FROM users WHERE id = $1`, input.UserID).Scan(&role)
 
 	status := "pending"
-	if role == "admin" || role == "moderator" {
+	// Developer, Admin, and Moderator posts bypass moderation and are auto-approved
+	if role == "developer" || role == "admin" || role == "moderator" {
 		status = "approved"
 	}
 
@@ -423,7 +441,7 @@ func handleGetPublicPosts(w http.ResponseWriter, r *http.Request) {
 			SELECT c.id, c.post_id, c.user_id, c.content, c.created_at, u.nickname, u.role, COALESCE(u.avatar_url, '')
 			FROM comments c
 			JOIN users u ON c.user_id = u.id
-			WHERE c.post_id = $1 AND c.parent_id IS NULL
+			WHERE c.post_id = $1 AND c.parent_id IS NULL AND c.status = 'approved'
 			ORDER BY c.created_at ASC
 		`, p.ID)
 
@@ -447,12 +465,69 @@ func handleGetPublicPosts(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(posts)
 }
 
+func handleGetPendingComments(w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query(`
+		SELECT c.id, c.post_id, c.content, c.created_at, u.nickname, u.role, COALESCE(u.avatar_url, '')
+		FROM comments c
+		JOIN users u ON c.user_id = u.id
+		WHERE c.status = 'pending'
+		ORDER BY c.created_at ASC
+	`)
+	if err != nil {
+		http.Error(w, "DB error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var comments []Comment
+	for rows.Next() {
+		var c Comment
+		rows.Scan(&c.ID, &c.PostID, &c.Content, &c.CreatedAt, &c.AuthorName, &c.AuthorRole, &c.AuthorPic)
+		comments = append(comments, c)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(comments)
+}
+
+func handleReviewComment(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		CommentID int    `json:"comment_id"`
+		Status    string `json:"status"` // 'approved' or 'rejected'
+	}
+	json.NewDecoder(r.Body).Decode(&input)
+
+	adminID := 0
+	if cookie, err := r.Cookie("session_user_id"); err == nil {
+		adminID, _ = strconv.Atoi(cookie.Value)
+	}
+
+	var commentUserID, postID int
+	db.QueryRow(`SELECT user_id, post_id FROM comments WHERE id = $1`, input.CommentID).Scan(&commentUserID, &postID)
+
+	if input.Status == "approved" {
+		db.Exec(`UPDATE comments SET status = 'approved' WHERE id = $1`, input.CommentID)
+		if commentUserID != adminID && adminID > 0 {
+			db.Exec(`INSERT INTO notifications (user_id, actor_id, type, post_id, message) VALUES ($1, $2, 'comment_approved', $3, 'Your comment was approved by an admin!')`, commentUserID, adminID, postID)
+		}
+	} else {
+		// Send rejection notification before deleting
+		if commentUserID != adminID && adminID > 0 {
+			db.Exec(`INSERT INTO notifications (user_id, actor_id, type, post_id, message) VALUES ($1, $2, 'comment_rejected', $3, 'Your comment was reviewed and rejected by an admin.')`, commentUserID, adminID, postID)
+		}
+		db.Exec(`DELETE FROM comments WHERE id = $1`, input.CommentID)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(Response{Status: "success", Message: "Comment review updated!"})
+}
+
 func fetchCommentReplies(parentID int, currentUserID int) []Comment {
 	rows, err := db.Query(`
 		SELECT c.id, c.post_id, c.user_id, c.parent_id, c.content, c.created_at, u.nickname, u.role, COALESCE(u.avatar_url, '')
 		FROM comments c
 		JOIN users u ON c.user_id = u.id
-		WHERE c.parent_id = $1
+		WHERE c.parent_id = $1 AND c.status = 'approved'
 		ORDER BY c.created_at ASC
 	`, parentID)
 	if err != nil {
@@ -515,7 +590,8 @@ func handleEditPost(w http.ResponseWriter, r *http.Request) {
 	var requesterRole string
 	db.QueryRow(`SELECT role FROM users WHERE id = $1`, input.UserID).Scan(&requesterRole)
 
-	if status == "approved" && requesterRole != "admin" && requesterRole != "moderator" {
+	// Allow developer, admin, and moderator roles to bypass restrictions on approved posts
+	if status == "approved" && requesterRole != "developer" && requesterRole != "admin" && requesterRole != "moderator" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
 		json.NewEncoder(w).Encode(Response{Status: "error", Message: "Approved posts cannot be edited by users."})
@@ -546,7 +622,8 @@ func handleDeletePost(w http.ResponseWriter, r *http.Request) {
 	var requesterRole string
 	db.QueryRow(`SELECT role FROM users WHERE id = $1`, input.UserID).Scan(&requesterRole)
 
-	if status == "approved" && requesterRole != "admin" && requesterRole != "moderator" {
+	// Allow developer, admin, and moderator roles to bypass restrictions on approved posts
+	if status == "approved" && requesterRole != "developer" && requesterRole != "admin" && requesterRole != "moderator" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
 		json.NewEncoder(w).Encode(Response{Status: "error", Message: "Approved posts cannot be deleted by users. Please contact an admin."})
@@ -653,29 +730,42 @@ func handleCreateComment(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewDecoder(r.Body).Decode(&input)
 
-	query := `INSERT INTO comments (post_id, user_id, parent_id, content) VALUES ($1, $2, $3, $4)`
-	_, err := db.Exec(query, input.PostID, input.UserID, input.ParentID, input.Content)
+	var role string
+	db.QueryRow(`SELECT role FROM users WHERE id = $1`, input.UserID).Scan(&role)
+
+	status := "pending"
+	// Developer, Admin, and Moderator comments bypass moderation and are auto-approved
+	if role == "developer" || role == "admin" || role == "moderator" {
+		status = "approved"
+	}
+
+	query := `INSERT INTO comments (post_id, user_id, parent_id, content, status) VALUES ($1, $2, $3, $4, $5)`
+	_, err := db.Exec(query, input.PostID, input.UserID, input.ParentID, input.Content, status)
 	if err != nil {
 		http.Error(w, "Failed to comment", http.StatusInternalServerError)
 		return
 	}
 
-	if input.ParentID != nil {
-		var parentUserID int
-		db.QueryRow(`SELECT user_id FROM comments WHERE id = $1`, *input.ParentID).Scan(&parentUserID)
-		if parentUserID != input.UserID {
-			db.Exec(`INSERT INTO notifications (user_id, actor_id, type, post_id, message) VALUES ($1, $2, 'reply_comment', $3, 'replied to your comment')`, parentUserID, input.UserID, input.PostID)
-		}
-	} else {
-		var postUserID int
-		db.QueryRow(`SELECT user_id FROM posts WHERE id = $1`, input.PostID).Scan(&postUserID)
-		if postUserID != input.UserID {
-			db.Exec(`INSERT INTO notifications (user_id, actor_id, type, post_id, message) VALUES ($1, $2, 'comment_post', $3, 'commented on your post')`, postUserID, input.UserID, input.PostID)
+	msg := "Comment submitted for review!"
+	if status == "approved" {
+		msg = "Comment added!"
+		if input.ParentID != nil {
+			var parentUserID int
+			db.QueryRow(`SELECT user_id FROM comments WHERE id = $1`, *input.ParentID).Scan(&parentUserID)
+			if parentUserID != input.UserID {
+				db.Exec(`INSERT INTO notifications (user_id, actor_id, type, post_id, message) VALUES ($1, $2, 'reply_comment', $3, 'replied to your comment')`, parentUserID, input.UserID, input.PostID)
+			}
+		} else {
+			var postUserID int
+			db.QueryRow(`SELECT user_id FROM posts WHERE id = $1`, input.PostID).Scan(&postUserID)
+			if postUserID != input.UserID {
+				db.Exec(`INSERT INTO notifications (user_id, actor_id, type, post_id, message) VALUES ($1, $2, 'comment_post', $3, 'commented on your post')`, postUserID, input.UserID, input.PostID)
+			}
 		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(Response{Status: "success", Message: "Comment added!"})
+	json.NewEncoder(w).Encode(Response{Status: "success", Message: msg})
 }
 
 func handleDeleteComment(w http.ResponseWriter, r *http.Request) {
@@ -731,22 +821,28 @@ func handleGetNotifications(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleMarkNotificationsRead(w http.ResponseWriter, r *http.Request) {
-	userID := 0
-	if cookie, err := r.Cookie("session_user_id"); err == nil && cookie.Value != "" {
-		userID, _ = strconv.Atoi(cookie.Value)
+	cookie, err := r.Cookie("session_user_id")
+	if err != nil || cookie.Value == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
 	}
 
-	if userID == 0 {
-		var input struct {
-			UserID int `json:"user_id"`
-		}
-		json.NewDecoder(r.Body).Decode(&input)
-		userID = input.UserID
+	userID, err := strconv.Atoi(cookie.Value)
+	if err != nil || userID <= 0 {
+		http.Error(w, "Invalid user ID", http.StatusBadRequest)
+		return
 	}
 
-	db.Exec(`UPDATE notifications SET is_read = TRUE WHERE user_id = $1`, userID)
+	// Update all unread notifications for this user to true
+	_, err = db.Exec(`UPDATE notifications SET is_read = TRUE WHERE user_id = $1 AND is_read = FALSE`, userID)
+	if err != nil {
+		log.Printf("Error marking notifications read for user %d: %v\n", userID, err)
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(Response{Status: "success"})
+	json.NewEncoder(w).Encode(Response{Status: "success", Message: "Notifications marked as read"})
 }
 
 func handleGetUsersList(w http.ResponseWriter, r *http.Request) {
@@ -825,11 +921,49 @@ func handleGetPendingPosts(w http.ResponseWriter, r *http.Request) {
 func handleReviewPost(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		PostID int    `json:"post_id"`
-		Status string `json:"status"`
+		Status string `json:"status"` // 'approved' or 'rejected'
 	}
-	json.NewDecoder(r.Body).Decode(&input)
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, "Invalid input", http.StatusBadRequest)
+		return
+	}
 
-	db.Exec(`UPDATE posts SET status = $1 WHERE id = $2`, input.Status, input.PostID)
+	adminID := 0
+	if cookie, err := r.Cookie("session_user_id"); err == nil {
+		adminID, _ = strconv.Atoi(cookie.Value)
+	}
+
+	var postUserID int
+	err := db.QueryRow(`SELECT user_id FROM posts WHERE id = $1`, input.PostID).Scan(&postUserID)
+	if err != nil {
+		http.Error(w, "Post not found", http.StatusNotFound)
+		return
+	}
+
+	if input.Status == "approved" {
+		db.Exec(`UPDATE posts SET status = 'approved' WHERE id = $1`, input.PostID)
+		if postUserID != adminID && adminID > 0 {
+			db.Exec(`INSERT INTO notifications (user_id, actor_id, type, post_id, message) VALUES ($1, $2, 'post_approved', $3, 'Your post was approved by an admin!')`, postUserID, adminID, input.PostID)
+		}
+	} else {
+		// 1. Send rejection notification without tying post_id (since post will be deleted)
+		if postUserID != adminID && adminID > 0 {
+			db.Exec(`INSERT INTO notifications (user_id, actor_id, type, post_id, message) VALUES ($1, $2, 'post_rejected', NULL, 'Your post was reviewed and rejected by an admin.')`, postUserID, adminID)
+		}
+
+		// 2. Clear related child records so foreign keys don't block post deletion
+		db.Exec(`DELETE FROM reactions WHERE post_id = $1`, input.PostID)
+		db.Exec(`DELETE FROM comments WHERE post_id = $1`, input.PostID)
+
+		// 3. Delete the post cleanly
+		_, delErr := db.Exec(`DELETE FROM posts WHERE id = $1`, input.PostID)
+		if delErr != nil {
+			log.Printf("Error deleting rejected post #%d: %v\n", input.PostID, delErr)
+			http.Error(w, "Failed to reject post", http.StatusInternalServerError)
+			return
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(Response{Status: "success", Message: "Post review updated!"})
 }
