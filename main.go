@@ -284,6 +284,7 @@ func main() {
 	// Admin Bullying Reports
 	http.HandleFunc("/api/admin/reports", handleGetBullyingReports)
 	http.HandleFunc("/api/admin/report/update", handleUpdateBullyingReport)
+	http.HandleFunc("/api/admin/report/delete", handleDeleteBullyingReport)
 
 	// Media Upload API
 	http.HandleFunc("/api/upload", handleUpload)
@@ -1261,6 +1262,32 @@ func handleResolveBullyingReport(w http.ResponseWriter, r *http.Request) {
 
 func handleUpdateBullyingReport(w http.ResponseWriter, r *http.Request) {
 	handleResolveBullyingReport(w, r)
+}
+
+// 3. Delete Bullying Report Endpoint
+func handleDeleteBullyingReport(w http.ResponseWriter, r *http.Request) {
+	_, ok := requireRole(r, "admin", "developer", "moderator")
+	if !ok {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	var input struct {
+		ReportID int `json:"report_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, "Invalid payload", http.StatusBadRequest)
+		return
+	}
+
+	_, err := db.Exec(`DELETE FROM bullying_reports WHERE id = $1`, input.ReportID)
+	if err != nil {
+		http.Error(w, "Failed to delete report", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(Response{Status: "success", Message: "Bullying report deleted successfully."})
 }
 
 func handleUpload(w http.ResponseWriter, r *http.Request) {

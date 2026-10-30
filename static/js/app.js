@@ -1086,6 +1086,8 @@ async function loadBullyingReports() {
         <div class="bullying-actions">
           <button class="bullying-action-btn primary" onclick="updateBullyingReport(${report.id}, 'reviewed')">Mark Reviewed</button>
           <button class="bullying-action-btn secondary" onclick="updateBullyingReport(${report.id}, 'resolved')">Resolve</button>
+          <button class="bullying-action-btn secondary" style="background: rgba(59, 130, 246, 0.2); color: #93c5fd;" onclick='downloadBullyingReport(${JSON.stringify(report)})'>📥 Download</button>
+          <button class="bullying-action-btn secondary" style="background: rgba(239, 68, 68, 0.2); color: #f87171;" onclick="deleteBullyingReport(${report.id})">🗑️ Delete</button>
         </div>
 
         ${report.admin_notes ? `<div class="bullying-notes">Notes: ${report.admin_notes}</div>` : ''}
@@ -1109,6 +1111,69 @@ async function updateBullyingReport(reportId, status) {
     body: JSON.stringify({ report_id: reportId, status, notes }),
   });
   loadBullyingReports();
+}
+
+// Download Bullying Report as a text file
+function downloadBullyingReport(report) {
+  const content = `
+=== CONFIDENTIAL BULLYING INCIDENT REPORT ===
+Report ID: #${report.id}
+Date Filed: ${report.created_at}
+Status: ${report.status.toUpperCase()}
+
+[REPORTER INFORMATION]
+Name: ${report.reporter_name}
+Email: ${report.reporter_email || 'N/A'}
+
+[INCIDENT DETAILS]
+Student Involved: ${report.student_name}
+Date of Incident: ${report.incident_date} ${report.incident_time ? 'at ' + report.incident_time : ''}
+Location: ${report.location}
+Severity: ${report.severity.toUpperCase()}
+Students Involved: ${report.students_involved}
+
+[DESCRIPTION]
+${report.description}
+
+[EVIDENCE]
+Evidence URL: ${report.evidence_url || 'None attached'}
+
+[ADMIN NOTES]
+${report.admin_notes || 'None recorded'}
+  `.trim();
+
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `Bullying_Report_${report.id}_${report.student_name.replace(/\s+/g, '_')}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// Delete Bullying Report
+async function deleteBullyingReport(reportId) {
+  if (!confirm('Are you sure you want to permanently delete this bullying report log?')) return;
+
+  try {
+    const res = await fetch('/api/admin/report/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ report_id: reportId }),
+    });
+
+    const data = await res.json();
+    if (res.ok) {
+      loadBullyingReports();
+    } else {
+      alert(data.message || 'Failed to delete report.');
+    }
+  } catch (err) {
+    console.error('Error deleting report:', err);
+    alert('Server error while deleting report.');
+  }
 }
 
 // Logout
