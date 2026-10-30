@@ -995,6 +995,29 @@ function isAdminLikeUser() {
 
 document.getElementById('bullyingReportForm')?.addEventListener('submit', async (e) => {
   e.preventDefault();
+  const statusEl = document.getElementById('bullyingReportStatus');
+  statusEl.textContent = 'Uploading evidence and submitting report...';
+  statusEl.className = 'status-msg';
+
+  const fileInput = document.getElementById('bullyingEvidenceInput');
+  let uploadedUrls = [];
+
+  if (fileInput && fileInput.files.length > 0) {
+    for (let i = 0; i < fileInput.files.length; i++) {
+      const formData = new FormData();
+      formData.append('image', fileInput.files[i]);
+      try {
+        const uploadRes = await fetch('/api/upload', { method: 'POST', body: formData });
+        const uploadData = await uploadRes.json();
+        if (uploadData.url) {
+          uploadedUrls.push(uploadData.url);
+        }
+      } catch (err) {
+        console.error('Failed to upload evidence image', err);
+      }
+    }
+  }
+
   const payload = {
     user_id: currentUser ? currentUser.id : 0,
     reporter_name: document.getElementById('reporterName').value.trim(),
@@ -1006,10 +1029,9 @@ document.getElementById('bullyingReportForm')?.addEventListener('submit', async 
     students_involved: document.getElementById('studentsInvolved').value.trim(),
     description: document.getElementById('bullyingDescription').value.trim(),
     severity: document.getElementById('bullyingSeverity').value,
-    evidence_url: document.getElementById('bullyingEvidence').value.trim(),
+    evidence_url: JSON.stringify(uploadedUrls), // Stores array as JSON string
   };
 
-  const statusEl = document.getElementById('bullyingReportStatus');
   try {
     const res = await fetch('/api/bullying/report', {
       method: 'POST',
@@ -1060,6 +1082,16 @@ async function loadBullyingReports() {
       const statusKey = (report.status || 'new').toLowerCase();
       const badgeClass = statusKey === 'resolved' ? 'status-resolved' : statusKey === 'reviewed' ? 'status-reviewed' : 'status-new';
 
+      // Parse evidence URLs safely (supports both old single strings and new JSON arrays)
+      let evidenceArray = [];
+      if (report.evidence_url) {
+        try {
+          evidenceArray = JSON.parse(report.evidence_url);
+        } catch (e) {
+          evidenceArray = [report.evidence_url]; 
+        }
+      }
+
       item.innerHTML = `
         <div class="bullying-header">
           <div>
@@ -1077,16 +1109,18 @@ async function loadBullyingReports() {
 
         <div class="bullying-description">${report.description}</div>
 
-        ${report.evidence_url ? `
-          <div class="bullying-evidence">
-            <a href="${report.evidence_url}" target="_blank" rel="noreferrer">View evidence</a>
+        ${evidenceArray.length > 0 ? `
+          <div class="bullying-evidence" style="margin-top: 12px;">
+            <button class="btn-sm btn-primary" onclick='openEvidenceModal(${JSON.stringify(evidenceArray)})'>
+              🖼️ See Evidence (${evidenceArray.length} file${evidenceArray.length > 1 ? 's' : ''})
+            </button>
           </div>
-        ` : ''}
+        ` : '<div class="sub-text" style="margin-top: 10px; font-size: 0.8rem;">No evidence attached.</div>'}
 
         <div class="bullying-actions">
           <button class="bullying-action-btn primary" onclick="updateBullyingReport(${report.id}, 'reviewed')">Mark Reviewed</button>
           <button class="bullying-action-btn secondary" onclick="updateBullyingReport(${report.id}, 'resolved')">Resolve</button>
-          <button class="bullying-action-btn secondary" style="background: rgba(59, 130, 246, 0.2); color: #93c5fd;" onclick='downloadBullyingReport(${JSON.stringify(report)})'>📥 Download</button>
+          <button class="bullying-action-btn secondary" style="background: rgba(59, 130, 246, 0.2); color: #93c5fd;" onclick='downloadBullyingReport(${JSON.stringify(report)})'>📥 Download Log</button>
           <button class="bullying-action-btn secondary" style="background: rgba(239, 68, 68, 0.2); color: #f87171;" onclick="deleteBullyingReport(${report.id})">🗑️ Delete</button>
         </div>
 
@@ -1174,6 +1208,33 @@ async function deleteBullyingReport(reportId) {
     console.error('Error deleting report:', err);
     alert('Server error while deleting report.');
   }
+}
+
+// Close Evidence Modal Listener
+document.getElementById('closeEvidenceModalBtn')?.addEventListener('click', () => {
+  document.getElementById('evidenceModal').style.display = 'none';
+});
+
+// Open and populate the Evidence Gallery Modal
+function openEvidenceModal(urls) {
+  const modalBody = document.getElementById('evidenceModalBody');
+  modalBody.innerHTML = '';
+
+  urls.forEach((url, index) => {
+    const container = document.createElement('div');
+    container.style.cssText = "display: flex; flex-direction: column; align-items: center; gap: 8px; background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);";
+    
+    container.innerHTML = `
+      <span style="font-size: 12px; color: #9ca3af;">Evidence File #${index + 1}</span>
+      <img src="${url}" onclick="openImageModal('${url}')" style="max-width: 100%; max-height: 250px; border-radius: 6px; cursor: pointer; object-fit: contain;" title="Click to enlarge view" />
+      <a href="${url}" target="_blank" download="Evidence_${index + 1}" class="btn-sm btn-primary" style="text-decoration: none; margin-top: 4px;">
+        📥 Download Image
+      </a>
+    `;
+    modalBody.appendChild(container);
+  });
+
+  document.getElementById('evidenceModal').style.display = 'flex';
 }
 
 // Logout
