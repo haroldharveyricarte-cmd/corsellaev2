@@ -90,6 +90,12 @@
       <button class="nav-item" data-view="profileView">
         <span class="icon">👤</span> <span>Profile</span>
       </button>
+      <button class="nav-item" data-view="reportBullyingView">
+        <span class="icon">🚩</span> <span>Report Bullying</span>
+      </button>
+      <button id="adminBullyingTabBtn" class="nav-item admin-only" data-view="bullyingAdminView" style="display: none;">
+        <span class="icon">📋</span> <span>Admin Bullying Logs</span>
+      </button>
       <button id="adminTabBtn" class="nav-item admin-only" data-view="adminView" style="display: none;">
         <span class="icon">🛡️</span> <span>Admin Panel</span>
       </button>
@@ -207,7 +213,74 @@
         </div>
       </section>
 
-     <!-- ADMIN PANEL VIEW -->
+      <!-- REPORT BULLYING VIEW -->
+      <section id="reportBullyingView" class="view-section" style="display: none;">
+        <div class="profile-card">
+          <h3>Report Bullying</h3>
+          <form id="bullyingReportForm">
+            <div class="input-group">
+              <label for="reporterName">Your Name</label>
+              <input type="text" id="reporterName" required />
+            </div>
+
+            <div class="input-group">
+              <label for="reporterEmail">Your Email</label>
+              <input type="email" id="reporterEmail" placeholder="optional" />
+            </div>
+
+            <div class="input-group">
+              <label for="studentName">Student Involved</label>
+              <input type="text" id="studentName" required />
+            </div>
+
+            <div class="input-group two-column">
+              <div>
+                <label for="incidentDate">Date</label>
+                <input type="date" id="incidentDate" required />
+              </div>
+              <div>
+                <label for="incidentTime">Time</label>
+                <input type="time" id="incidentTime" />
+              </div>
+            </div>
+
+            <div class="input-group">
+              <label for="reportLocation">Location</label>
+              <input type="text" id="reportLocation" required placeholder="Classroom, hallway, online, etc." />
+            </div>
+
+            <div class="input-group">
+              <label for="studentsInvolved">Students Involved</label>
+              <textarea id="studentsInvolved" rows="2" required placeholder="List names or groups involved"></textarea>
+            </div>
+
+            <div class="input-group">
+              <label for="bullyingDescription">Describe What Happened</label>
+              <textarea id="bullyingDescription" rows="5" required placeholder="Include details of the bullying, what was said or done, and any witnesses."></textarea>
+            </div>
+
+            <div class="input-group">
+              <label for="bullyingSeverity">Severity</label>
+              <select id="bullyingSeverity">
+                <option value="low">Low</option>
+                <option value="medium" selected>Medium</option>
+                <option value="high">High</option>
+                <option value="critical">Critical</option>
+              </select>
+            </div>
+
+            <div class="input-group">
+              <label for="bullyingEvidence">Evidence / Link / Screenshot</label>
+              <input type="text" id="bullyingEvidence" placeholder="Optional image link, message screenshot, or evidence URL" />
+            </div>
+
+            <button type="submit" class="btn-primary">Submit Report</button>
+          </form>
+          <p id="bullyingReportStatus" class="status-msg"></p>
+        </div>
+      </section>
+
+      <!-- ADMIN PANEL VIEW -->
       <section id="adminView" class="view-section" style="display: none;">
         <div class="admin-grid">
           <div class="admin-card">
@@ -232,6 +305,14 @@
             <h3>User Management</h3>
             <div id="usersList" class="admin-list"></div>
           </div>
+        </div>
+      </section>
+
+      <!-- ADMIN BULLYING LOGS VIEW -->
+      <section id="bullyingAdminView" class="view-section" style="display: none;">
+        <div class="admin-card">
+          <h3>Bullying Reports</h3>
+          <div id="bullyingReportsList" class="admin-list"></div>
         </div>
       </section>
 

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cloudinary/cloudinary-go/v2"
@@ -94,6 +95,26 @@ type Response struct {
 	User    *User  `json:"user,omitempty"`
 }
 
+type BullyingReport struct {
+	ID               int    `json:"id"`
+	UserID           int    `json:"user_id"`
+	ReporterName     string `json:"reporter_name"`
+	ReporterEmail    string `json:"reporter_email,omitempty"`
+	StudentName      string `json:"student_name"`
+	IncidentDate     string `json:"incident_date"`
+	IncidentTime     string `json:"incident_time,omitempty"`
+	Location         string `json:"location"`
+	StudentsInvolved string `json:"students_involved"`
+	Description      string `json:"description"`
+	Severity         string `json:"severity"`
+	EvidenceURL      string `json:"evidence_url,omitempty"`
+	Status           string `json:"status"`
+	AdminNotes       string `json:"admin_notes,omitempty"`
+	ReviewedBy       int    `json:"reviewed_by,omitempty"`
+	CreatedAt        string `json:"created_at"`
+	ResolvedAt       string `json:"resolved_at,omitempty"`
+}
+
 func initDB() {
 	var err error
 	connStr := os.Getenv("DATABASE_URL")
@@ -112,6 +133,7 @@ func initDB() {
 	}
 
 	ensureAdminAccount()
+	ensureDatabaseSchema()
 	fmt.Println("✅ Connected to Neon PostgreSQL database!")
 }
 
@@ -143,6 +165,52 @@ func ensureAdminAccount() {
 	}
 }
 
+func ensureDatabaseSchema() {
+	if db == nil {
+		log.Println("⚠️ Skipping database schema setup because DATABASE_URL is not configured.")
+		return
+	}
+
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS bullying_reports (
+			id SERIAL PRIMARY KEY,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)
+	`)
+	if err != nil {
+		log.Printf("Failed to create bullying_reports table: %v\n", err)
+	}
+
+	migrations := []string{
+		`ALTER TABLE bullying_reports ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE SET NULL`,
+		`ALTER TABLE bullying_reports ADD COLUMN IF NOT EXISTS reporter_name TEXT`,
+		`ALTER TABLE bullying_reports ADD COLUMN IF NOT EXISTS reporter_email TEXT`,
+		`ALTER TABLE bullying_reports ADD COLUMN IF NOT EXISTS student_name TEXT`,
+		`ALTER TABLE bullying_reports ADD COLUMN IF NOT EXISTS incident_date DATE`,
+		`ALTER TABLE bullying_reports ADD COLUMN IF NOT EXISTS incident_time TEXT`,
+		`ALTER TABLE bullying_reports ADD COLUMN IF NOT EXISTS location TEXT`,
+		`ALTER TABLE bullying_reports ADD COLUMN IF NOT EXISTS students_involved TEXT`,
+		`ALTER TABLE bullying_reports ADD COLUMN IF NOT EXISTS description TEXT`,
+		`ALTER TABLE bullying_reports ADD COLUMN IF NOT EXISTS severity TEXT DEFAULT 'medium'`,
+		`ALTER TABLE bullying_reports ADD COLUMN IF NOT EXISTS evidence_url TEXT`,
+		`ALTER TABLE bullying_reports ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'new'`,
+		`ALTER TABLE bullying_reports ADD COLUMN IF NOT EXISTS admin_notes TEXT`,
+		`ALTER TABLE bullying_reports ADD COLUMN IF NOT EXISTS reviewed_by INTEGER REFERENCES users(id)`,
+		`ALTER TABLE bullying_reports ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ`,
+	}
+
+	for _, stmt := range migrations {
+		if _, err := db.Exec(stmt); err != nil {
+			log.Printf("Schema migration warning: %v\nSQL: %s\n", err, stmt)
+		}
+	}
+
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_bullying_reports_status ON bullying_reports(status, created_at DESC)`)
+	if err != nil {
+		log.Printf("Failed to create bullying_reports index: %v\n", err)
+	}
+}
+
 func initCloudinary() {
 	cldURL := os.Getenv("CLOUDINARY_URL")
 	if cldURL == "" {
@@ -161,6 +229,7 @@ func initCloudinary() {
 func main() {
 	initDB()
 	initCloudinary()
+	ensureDatabaseSchema()
 
 	fs := http.FileServer(http.Dir("./static"))
 	http.Handle("/static/", http.StripPrefix("/static/", fs))
@@ -181,6 +250,11 @@ func main() {
 	http.HandleFunc("/api/logout", handleLogout)
 	http.HandleFunc("/api/user/profile", handleUserProfile)
 	http.HandleFunc("/api/user/update", handleUpdateProfile)
+
+	// Bullying Report APIs
+	http.HandleFunc("/api/bullying/report", handleCreateBullyingReport)
+	http.HandleFunc("/api/bullying/logs", handleGetBullyingReports)
+	http.HandleFunc("/api/bullying/logs/resolve", handleResolveBullyingReport)
 
 	// Post APIs
 	http.HandleFunc("/api/posts/create", handleCreatePost)
@@ -207,6 +281,9 @@ func main() {
 	// Admin Comment Moderation APIs
 	http.HandleFunc("/api/admin/comments/pending", handleGetPendingComments)
 	http.HandleFunc("/api/admin/comments/review", handleReviewComment)
+	// Admin Bullying Reports
+	http.HandleFunc("/api/admin/reports", handleGetBullyingReports)
+	http.HandleFunc("/api/admin/report/update", handleUpdateBullyingReport)
 
 	// Media Upload API
 	http.HandleFunc("/api/upload", handleUpload)
@@ -966,6 +1043,224 @@ func handleReviewPost(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(Response{Status: "success", Message: "Post review updated!"})
+}
+
+func requireRole(r *http.Request, allowedRoles ...string) (int, bool) {
+	cookie, err := r.Cookie("session_user_id")
+	if err != nil || cookie.Value == "" {
+		return 0, false
+	}
+
+	userID, err := strconv.Atoi(cookie.Value)
+	if err != nil || userID <= 0 {
+		return 0, false
+	}
+
+	var role string
+	err = db.QueryRow(`SELECT role FROM users WHERE id = $1`, userID).Scan(&role)
+	if err != nil {
+		return 0, false
+	}
+
+	for _, allowed := range allowedRoles {
+		if role == allowed {
+			return userID, true
+		}
+	}
+
+	return userID, false
+}
+
+func handleCreateBullyingReport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var input struct {
+		UserID           int    `json:"user_id"`
+		ReporterName     string `json:"reporter_name"`
+		ReporterEmail    string `json:"reporter_email"`
+		StudentName      string `json:"student_name"`
+		IncidentDate     string `json:"incident_date"`
+		IncidentTime     string `json:"incident_time"`
+		Location         string `json:"location"`
+		StudentsInvolved string `json:"students_involved"`
+		Description      string `json:"description"`
+		Severity         string `json:"severity"`
+		EvidenceURL      string `json:"evidence_url"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, "Invalid report payload", http.StatusBadRequest)
+		return
+	}
+
+	if strings.TrimSpace(input.ReporterName) == "" || strings.TrimSpace(input.StudentName) == "" || strings.TrimSpace(input.Location) == "" || strings.TrimSpace(input.Description) == "" || strings.TrimSpace(input.StudentsInvolved) == "" || strings.TrimSpace(input.IncidentDate) == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(Response{Status: "error", Message: "Please complete the required bullying report fields."})
+		return
+	}
+
+	if input.Severity == "" {
+		input.Severity = "medium"
+	}
+
+	_, err := db.Exec(`
+		INSERT INTO bullying_reports (
+			user_id,
+			reporter_name,
+			reporter_email,
+			student_name,
+			incident_date,
+			incident_time,
+			location,
+			students_involved,
+			description,
+			severity,
+			evidence_url,
+			status
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'new')
+	`, input.UserID, input.ReporterName, input.ReporterEmail, input.StudentName, input.IncidentDate, input.IncidentTime, input.Location, input.StudentsInvolved, input.Description, input.Severity, input.EvidenceURL)
+	if err != nil {
+		log.Printf("Failed to insert bullying report: %v\n", err)
+		http.Error(w, "Failed to submit report", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(Response{Status: "success", Message: "Bullying report submitted successfully. Admins will review it shortly."})
+}
+
+func handleGetBullyingReports(w http.ResponseWriter, r *http.Request) {
+	_, ok := requireRole(r, "admin", "developer", "moderator")
+	if !ok {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	rows, err := db.Query(`
+		SELECT br.id, br.user_id, br.reporter_name, br.reporter_email, br.student_name, br.incident_date,
+		       br.incident_time, br.location, br.students_involved, br.description, br.severity,
+		       br.evidence_url, br.status, br.admin_notes, br.reviewed_by, br.created_at, br.resolved_at
+		FROM bullying_reports br
+		ORDER BY br.created_at DESC
+	`)
+	if err != nil {
+		http.Error(w, "DB error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var reports []BullyingReport
+	for rows.Next() {
+		var report BullyingReport
+		var userID sql.NullInt64
+		var reporterEmail sql.NullString
+		var incidentTime sql.NullString
+		var evidenceURL sql.NullString
+		var adminNotes sql.NullString
+		var reviewedBy sql.NullInt64
+		var resolvedAt sql.NullString
+
+		if err := rows.Scan(
+			&report.ID,
+			&userID,
+			&report.ReporterName,
+			&reporterEmail,
+			&report.StudentName,
+			&report.IncidentDate,
+			&incidentTime,
+			&report.Location,
+			&report.StudentsInvolved,
+			&report.Description,
+			&report.Severity,
+			&evidenceURL,
+			&report.Status,
+			&adminNotes,
+			&reviewedBy,
+			&report.CreatedAt,
+			&resolvedAt,
+		); err != nil {
+			log.Printf("Error scanning bullying report: %v\n", err)
+			continue
+		}
+
+		if userID.Valid {
+			report.UserID = int(userID.Int64)
+		}
+		if reporterEmail.Valid {
+			report.ReporterEmail = reporterEmail.String
+		}
+		if incidentTime.Valid {
+			report.IncidentTime = incidentTime.String
+		}
+		if evidenceURL.Valid {
+			report.EvidenceURL = evidenceURL.String
+		}
+		if adminNotes.Valid {
+			report.AdminNotes = adminNotes.String
+		}
+		if reviewedBy.Valid {
+			report.ReviewedBy = int(reviewedBy.Int64)
+		}
+		if resolvedAt.Valid {
+			report.ResolvedAt = resolvedAt.String
+		}
+
+		reports = append(reports, report)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(reports)
+}
+
+func handleResolveBullyingReport(w http.ResponseWriter, r *http.Request) {
+	_, ok := requireRole(r, "admin", "developer", "moderator")
+	if !ok {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	var input struct {
+		ReportID int    `json:"report_id"`
+		Status   string `json:"status"`
+		Notes    string `json:"notes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, "Invalid payload", http.StatusBadRequest)
+		return
+	}
+
+	if input.Status == "" {
+		input.Status = "reviewed"
+	}
+
+	adminID := 0
+	if cookie, err := r.Cookie("session_user_id"); err == nil {
+		adminID, _ = strconv.Atoi(cookie.Value)
+	}
+
+	_, err := db.Exec(`
+		UPDATE bullying_reports
+		SET status = $1,
+		    admin_notes = $2,
+		    reviewed_by = $3,
+		    resolved_at = NOW()
+		WHERE id = $4
+	`, input.Status, input.Notes, adminID, input.ReportID)
+	if err != nil {
+		http.Error(w, "Failed to update report", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(Response{Status: "success", Message: "Bullying report updated."})
+}
+
+func handleUpdateBullyingReport(w http.ResponseWriter, r *http.Request) {
+	handleResolveBullyingReport(w, r)
 }
 
 func handleUpload(w http.ResponseWriter, r *http.Request) {

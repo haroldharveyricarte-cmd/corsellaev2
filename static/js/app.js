@@ -80,6 +80,7 @@ function initUserUI() {
     document.getElementById('adminTabBtn').style.display = 'none';
   }
 
+  setBullyingAccess();
   loadNotifications();
   // Poll notifications every 5 seconds so multi-account sessions update live
   setInterval(loadNotifications, 5000);
@@ -140,6 +141,11 @@ function switchView(targetView) {
   } else if (targetView === 'profileView') {
     pageTitle.textContent = 'User Profile';
     loadProfileData();
+  } else if (targetView === 'reportBullyingView') {
+    pageTitle.textContent = 'Report Bullying';
+  } else if (targetView === 'bullyingAdminView') {
+    pageTitle.textContent = 'Admin Bullying Logs';
+    loadBullyingReports();
   } else if (targetView === 'adminView') {
     pageTitle.textContent = 'Admin & Moderation Panel';
     loadAdminPanel();
@@ -974,6 +980,137 @@ async function toggleBan(userId, isBanned) {
     loadUsersList();
 }
 
+// Bullying Reports
+function setBullyingAccess() {
+  const isRoleVisible = currentUser && (currentUser.role === 'admin' || currentUser.role === 'developer' || currentUser.role === 'moderator');
+  const adminBullyingBtn = document.getElementById('adminBullyingTabBtn');
+  if (adminBullyingBtn) {
+    adminBullyingBtn.style.display = isRoleVisible ? 'flex' : 'none';
+  }
+}
+
+function isAdminLikeUser() {
+  return currentUser && ['admin', 'developer', 'moderator'].includes(currentUser.role);
+}
+
+document.getElementById('bullyingReportForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const payload = {
+    user_id: currentUser ? currentUser.id : 0,
+    reporter_name: document.getElementById('reporterName').value.trim(),
+    reporter_email: document.getElementById('reporterEmail').value.trim(),
+    student_name: document.getElementById('studentName').value.trim(),
+    incident_date: document.getElementById('incidentDate').value,
+    incident_time: document.getElementById('incidentTime').value,
+    location: document.getElementById('reportLocation').value.trim(),
+    students_involved: document.getElementById('studentsInvolved').value.trim(),
+    description: document.getElementById('bullyingDescription').value.trim(),
+    severity: document.getElementById('bullyingSeverity').value,
+    evidence_url: document.getElementById('bullyingEvidence').value.trim(),
+  };
+
+  const statusEl = document.getElementById('bullyingReportStatus');
+  try {
+    const res = await fetch('/api/bullying/report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      statusEl.textContent = data.message || 'Unable to submit report.';
+      statusEl.className = 'status-msg error';
+      return;
+    }
+
+    statusEl.textContent = data.message;
+    statusEl.className = 'status-msg success';
+    e.target.reset();
+  } catch (error) {
+    statusEl.textContent = 'Something went wrong while submitting the report.';
+    statusEl.className = 'status-msg error';
+  }
+});
+
+async function loadBullyingReports() {
+  if (!isAdminLikeUser()) {
+    const box = document.getElementById('bullyingReportsList');
+    if (box) {
+      box.innerHTML = '<p class="sub-text">You do not have access to the bullying logs.</p>';
+    }
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/bullying/logs');
+    const reports = await res.json();
+    const box = document.getElementById('bullyingReportsList');
+    box.innerHTML = '';
+
+    if (!reports || reports.length === 0) {
+      box.innerHTML = '<p class="sub-text">No bullying reports have been submitted yet.</p>';
+      return;
+    }
+
+    reports.forEach(report => {
+      const item = document.createElement('div');
+      item.className = 'bullying-report-card';
+
+      const statusKey = (report.status || 'new').toLowerCase();
+      const badgeClass = statusKey === 'resolved' ? 'status-resolved' : statusKey === 'reviewed' ? 'status-reviewed' : 'status-new';
+
+      item.innerHTML = `
+        <div class="bullying-header">
+          <div>
+            <div class="bullying-title">${report.student_name}</div>
+            <div class="bullying-meta">Reported by: ${report.reporter_name} • ${report.incident_date}${report.incident_time ? ' at ' + report.incident_time : ''}</div>
+          </div>
+          <span class="bullying-status-badge ${badgeClass}">${statusKey}</span>
+        </div>
+
+        <div class="bullying-grid">
+          <div class="bullying-meta-row"><span class="bullying-label">Location</span><span>${report.location}</span></div>
+          <div class="bullying-meta-row"><span class="bullying-label">Students involved</span><span>${report.students_involved}</span></div>
+          <div class="bullying-meta-row"><span class="bullying-label">Severity</span><span>${report.severity}</span></div>
+        </div>
+
+        <div class="bullying-description">${report.description}</div>
+
+        ${report.evidence_url ? `
+          <div class="bullying-evidence">
+            <a href="${report.evidence_url}" target="_blank" rel="noreferrer">View evidence</a>
+          </div>
+        ` : ''}
+
+        <div class="bullying-actions">
+          <button class="bullying-action-btn primary" onclick="updateBullyingReport(${report.id}, 'reviewed')">Mark Reviewed</button>
+          <button class="bullying-action-btn secondary" onclick="updateBullyingReport(${report.id}, 'resolved')">Resolve</button>
+        </div>
+
+        ${report.admin_notes ? `<div class="bullying-notes">Notes: ${report.admin_notes}</div>` : ''}
+      `;
+      box.appendChild(item);
+    });
+  } catch (err) {
+    console.error('Error loading bullying reports:', err);
+    const box = document.getElementById('bullyingReportsList');
+    if (box) {
+      box.innerHTML = '<p class="sub-text">Unable to load bullying logs right now.</p>';
+    }
+  }
+}
+
+async function updateBullyingReport(reportId, status) {
+  const notes = status === 'resolved' ? 'Resolved by admin.' : 'Reviewed by admin.';
+  await fetch('/api/bullying/logs/resolve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ report_id: reportId, status, notes }),
+  });
+  loadBullyingReports();
+}
+
 // Logout
 document.getElementById('logoutBtn')?.addEventListener('click', async () => {
   try {
@@ -985,3 +1122,4 @@ document.getElementById('logoutBtn')?.addEventListener('click', async () => {
 
 initUserUI();
 loadPublicPosts();
+setBullyingAccess();
